@@ -1,0 +1,48 @@
+# Builds and runs the Swift unit tests on every push.
+#
+# The job runs in the swift:6.3 toolchain image and leans on caching:
+#   * ~/.cache/org.swift.swiftpm — cloned SwiftPM dependencies (swift-syntax,
+#     swift-crypto …)
+#   * .build                     — Swift incremental build products
+# Source-derived keys carry the commit sha so each run saves a fresh cache, and
+# restore-keys fall back to the most recent prefix match for a warm incremental
+# build. The test RSA key and crypto vectors are committed under Schemas/, so no
+# key generation is needed.
+name: CI
+
+on:
+  push:
+
+# A newer push to the same ref makes in-flight runs obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Swift unit tests
+    runs-on: ubuntu-latest
+    container: swift:6.3
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/org.swift.swiftpm
+          key: swiftpm-deps-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            swiftpm-deps-${{ runner.os }}-
+
+      - name: Cache Swift build products
+        uses: actions/cache@v5
+        with:
+          path: .build
+          key: swift-unit-${{ runner.os }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swift-unit-${{ runner.os }}-${{ hashFiles('Package.resolved') }}-
+            swift-unit-${{ runner.os }}-
+
+      - name: Run unit tests
+        run: swift test

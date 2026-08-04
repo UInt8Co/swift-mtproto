@@ -1,0 +1,14 @@
+{
+  "modpow": {
+    "base": "12345678",
+    "exp": "abcdef",
+    "mod": "1fffffffffffffff",
+    "result": "b90282fe3a15f01"
+  },
+  "ige": {
+    "key": "1ec15e1222fe4dd90c0c687a97197088bd528a64139f1a5ff45eb0b4e4012b8d",
+    "iv": "208c495b98d72b5f00f66816a1145f5f0c6e07f85e77452d4bd73a753ba13327",
+    "plain": "c46af06ce26c0739548edd6dbc7275fd05ef7be4b4d863808c8143597cef9353dec0d972c1a90316c1c7e2683f6d6fc077e0f74167074fa205183c0f76525621",
+    "cipher": "9440ab23cc00ec81b696eb0769dfec04b2567b486737916e0c5ec2215ef8dceeee7c47d364d531a11319610e49980b3719ba73ae594da3d1a6a0fc15addf8a44"
+  }
+}
