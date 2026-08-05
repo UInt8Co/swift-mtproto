@@ -1,5 +1,8 @@
 # swift-mtproto
 
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FUInt8Co%2Fswift-mtproto%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/UInt8Co/swift-mtproto)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FUInt8Co%2Fswift-mtproto%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/UInt8Co/swift-mtproto)
+
 The foundations of [MTProto](https://core.telegram.org/mtproto) in Swift: TL
 serialization, the crypto primitives the protocol is built on, the MTProto
 service schema, and a code generator that turns Telegram's TL schema into Swift.
