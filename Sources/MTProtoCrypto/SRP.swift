@@ -127,6 +127,9 @@ public enum SRP {
     group: Group, salt1: Data, salt2: Data, verifier v: Data, serverSecret b: Data,
     a clientA: Data, m1: Data
   ) -> Bool {
+    // Reject malformed wire values before allocating bignums or doing any
+    // modular exponentiations. SRP hashes group elements padded to 2048 bits.
+    guard clientA.count == size, m1.count == SHA256.byteCount else { return false }
     let p = group.p
     let aBig = BigUInt(bigEndianBytes: clientA)
     // Reject A outside (1, p-1): the spec/tdlib guard against the degenerate

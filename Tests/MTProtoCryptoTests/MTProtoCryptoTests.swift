@@ -1,3 +1,4 @@
+import Crypto
 import Testing
 
 @testable import MTProtoCrypto
@@ -105,6 +106,79 @@ struct MTProtoCryptoTests {
     let ciphertext = Data([UInt8](hex: key.rsaVector.cHex)!)
     let recovered = rsa.rawDecrypt(ciphertext)
     #expect([UInt8](recovered) == [UInt8](hex: key.rsaVector.mHex)!)
+  }
+
+  @Test func rsaRecoveryRejectsInvalidCiphertextBounds() throws {
+    let key = try loadKey()
+    let rsa = RSAPrivateKey(
+      modulusHex: key.n, publicExponentHex: key.e, privateExponentHex: key.d)!
+    for ciphertext in [
+      Data(), Data(repeating: 0, count: 255), Data(repeating: 0, count: 257),
+      Data(repeating: 0, count: 1024 * 1024), rsa.modulus.bigEndianBytes(byteCount: 256),
+    ] {
+      #expect(rsa.recoverDataFromRSAPad(ciphertext) == nil)
+      #expect(rsa.recoverPlaintextBlock(ciphertext).isEmpty)
+    }
+  }
+
+  @Test func oldStyleHashRejectsInvalidLengthsAndTampering() throws {
+    let key = try loadKey()
+    let rsa = RSAPrivateKey(
+      modulusHex: key.n, publicExponentHex: key.e, privateExponentHex: key.d)!
+    let payload = Data([1, 2, 3, 4])
+    let block = Data(Insecure.SHA1.hash(data: payload)) + payload
+    #expect(rsa.verifyOldStyleHash(plaintextBlock: block, dataLength: payload.count))
+    for length in [-1, Int.min, Int.max, payload.count + 1] {
+      #expect(!rsa.verifyOldStyleHash(plaintextBlock: block, dataLength: length))
+    }
+    #expect(!rsa.verifyOldStyleHash(plaintextBlock: Data(), dataLength: 0))
+    var tampered = block
+    tampered[0] ^= 1
+    #expect(!rsa.verifyOldStyleHash(plaintextBlock: tampered, dataLength: payload.count))
+  }
+
+  @Test func oldStyleRecoveryPreservesValidLayout() throws {
+    let key = try loadKey()
+    let rsa = RSAPrivateKey(
+      modulusHex: key.n, publicExponentHex: key.e, privateExponentHex: key.d)!
+    let payload = Data([1, 2, 3, 4])
+    let block =
+      Data(Insecure.SHA1.hash(data: payload)) + payload
+      + Data(repeating: 0xa5, count: 255 - 20 - payload.count)
+    let ciphertext = BigUInt(bigEndianBytes: block)
+      .power(rsa.publicExponent, modulus: rsa.modulus).bigEndianBytes(byteCount: 256)
+    #expect(rsa.recoverPlaintextBlock(ciphertext) == block)
+  }
+
+  @Test func rsaPadRecoveryPreservesValidLayout() throws {
+    let key = try loadKey()
+    let rsa = RSAPrivateKey(
+      modulusHex: key.n, publicExponentHex: key.e, privateExponentHex: key.d)!
+    let payload = Data((0..<192).map { UInt8($0) })
+    // Independent encoding of the protocol's RSA_PAD block. Retry the wrapping
+    // key if its 256-byte integer would be outside the RSA modulus.
+    var wrapped: Data?
+    for nonce in UInt8(0)...UInt8(255) {
+      let tempKey = Data(repeating: nonce, count: 32)
+      let inner = Data(payload.reversed()) + Data(SHA256.hash(data: tempKey + payload))
+      let cipher = try AESIGE.encrypt(inner, key: tempKey, iv: Data(repeating: 0, count: 32))
+      let hash = Array(SHA256.hash(data: cipher))
+      let keyXor = Data(zip(tempKey, hash).map { $0 ^ $1 })
+      let block = keyXor + cipher
+      if BigUInt(bigEndianBytes: block) < rsa.modulus {
+        wrapped = block
+        break
+      }
+    }
+    let block = try #require(wrapped)
+    let ciphertext = BigUInt(bigEndianBytes: block)
+      .power(rsa.publicExponent, modulus: rsa.modulus).bigEndianBytes(byteCount: 256)
+    #expect(rsa.recoverDataFromRSAPad(ciphertext) == payload)
+    var tampered = block
+    tampered[255] ^= 1
+    let badCiphertext = BigUInt(bigEndianBytes: tampered)
+      .power(rsa.publicExponent, modulus: rsa.modulus).bigEndianBytes(byteCount: 256)
+    #expect(rsa.recoverDataFromRSAPad(badCiphertext) == nil)
   }
 
   @Test func rsaKeyIsConsistent() throws {

@@ -203,14 +203,17 @@ extension Array: TLDecodable where Element: TLDecodable {
     bareCountFrom reader: inout TLReader,
     element: (inout TLReader) throws -> Element
   ) throws {
+    try reader.beginDecodingComposite()
+    defer { reader.endDecodingComposite() }
     let count = Int(try reader.readInt32())
     guard count >= 0 else {
       throw TLError.invalidValue("negative vector count \(count)")
     }
+    try reader.consumeVectorElements(count)
     var result: [Element] = []
-    // Every TL value occupies at least 4 bytes; bound the preallocation
-    // so a corrupt count cannot trigger a huge allocation.
-    result.reserveCapacity(Swift.min(count, reader.bytesRemaining / 4 + 1))
+    // Bare empty constructors can occupy zero bytes. Bound both their total
+    // work (above) and speculative allocation before validating any elements.
+    result.reserveCapacity(Swift.min(count, reader.bytesRemaining / 4, 1024))
     for _ in 0..<count {
       result.append(try element(&reader))
     }

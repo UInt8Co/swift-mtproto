@@ -10,17 +10,36 @@
 /// remaining length and throws ``TLError/endOfData(needed:remaining:)`` when
 /// the input is truncated.
 public struct TLReader: Sendable {
+  /// Resource limits for decoding untrusted TL, independent of its wire format.
+  public struct Limits: Sendable, Equatable {
+    /// Maximum simultaneously active object, enum, and vector decoders.
+    public var maximumNestingDepth: Int
+    /// Maximum total vector elements declared across this reader's input.
+    /// This also bounds vectors of bare constructors that occupy zero bytes.
+    public var maximumVectorElements: Int
+
+    public init(maximumNestingDepth: Int = 128, maximumVectorElements: Int = 1_000_000) {
+      self.maximumNestingDepth = maximumNestingDepth
+      self.maximumVectorElements = maximumVectorElements
+    }
+  }
+
   private let bytes: [UInt8]
+  private let limits: Limits
+  private var nestingDepth = 0
+  private var vectorElements = 0
   /// Current read position, in bytes from the start of the input.
   public private(set) var offset: Int
 
-  public init(_ data: Data) {
+  public init(_ data: Data, limits: Limits = Limits()) {
     self.bytes = [UInt8](data)
+    self.limits = limits
     self.offset = 0
   }
 
-  public init(_ bytes: [UInt8]) {
+  public init(_ bytes: [UInt8], limits: Limits = Limits()) {
     self.bytes = bytes
+    self.limits = limits
     self.offset = 0
   }
 
@@ -31,9 +50,37 @@ public struct TLReader: Sendable {
   public var isAtEnd: Bool { offset >= bytes.count }
 
   private func require(_ count: Int) throws {
+    guard count >= 0 else {
+      throw TLError.invalidValue("negative byte count \(count)")
+    }
     guard bytesRemaining >= count else {
       throw TLError.endOfData(needed: count, remaining: bytesRemaining)
     }
+  }
+
+  /// Begins a composite decode. Custom recursive decoders must pair a successful
+  /// call with ``endDecodingComposite()`` in `defer`, including error paths.
+  /// The TL macros and vector decoder perform this bookkeeping automatically.
+  public mutating func beginDecodingComposite() throws {
+    guard nestingDepth < limits.maximumNestingDepth else {
+      throw TLError.invalidValue("TL nesting depth limit exceeded")
+    }
+    nestingDepth += 1
+  }
+
+  /// Ends a composite decode begun by ``beginDecodingComposite()``.
+  public mutating func endDecodingComposite() {
+    if nestingDepth > 0 { nestingDepth -= 1 }
+  }
+
+  /// Charges declared vector elements before any allocation or element decode.
+  mutating func consumeVectorElements(_ count: Int) throws {
+    guard count >= 0, limits.maximumVectorElements >= vectorElements,
+      count <= limits.maximumVectorElements - vectorElements
+    else {
+      throw TLError.invalidValue("TL vector element limit exceeded")
+    }
+    vectorElements += count
   }
 
   // MARK: Raw

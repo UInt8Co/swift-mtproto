@@ -110,13 +110,16 @@ public struct RSAPrivateKey: Sendable {
       lines.append(b64[i..<j])
       i = j
     }
-    return "-----BEGIN RSA PUBLIC KEY-----\n\(lines.joined(separator: "\n"))\n-----END RSA PUBLIC KEY-----"
+    return
+      "-----BEGIN RSA PUBLIC KEY-----\n\(lines.joined(separator: "\n"))\n-----END RSA PUBLIC KEY-----"
   }
 
   // MARK: - Raw RSA
 
   /// Raw RSA private-key operation: `ciphertext^d mod n`, returning the
   /// `modulusByteCount`-byte big-endian result.
+  /// This is a low-level operation; validate untrusted ciphertext first, or use
+  /// the MTProto recovery methods, which enforce its 2048-bit block bounds.
   public func rawDecrypt(_ ciphertext: Data) -> Data {
     let c = BigUInt(bigEndianBytes: ciphertext)
     let m = c.power(privateExponent, modulus: modulus)
@@ -129,9 +132,12 @@ public struct RSAPrivateKey: Sendable {
   /// Decode the embedded `data` (a self-delimiting `p_q_inner_data` at offset 20)
   /// to learn its length, then validate with
   /// ``verifyOldStyleHash(plaintextBlock:dataLength:)``.
+  /// Returns empty data for an invalid MTProto RSA block.
   public func recoverPlaintextBlock(_ encryptedData: Data) -> Data {
+    guard isValidEncryptedBlock(encryptedData) else { return Data() }
     let decrypted = rawDecrypt(encryptedData)
-    return decrypted.count > 255 ? Data(decrypted.suffix(255)) : decrypted
+    guard decrypted.first == 0 else { return Data() }
+    return Data(decrypted.suffix(255))
   }
 
   /// Recovers the **RSA_PAD** plaintext from `encrypted_data`: an AES-256-IGE /
@@ -153,6 +159,7 @@ public struct RSAPrivateKey: Sendable {
   /// random bytes — iff `SHA256(temp_key ‖ data_with_padding) == hash`, and `nil`
   /// otherwise: the block was not RSA_PAD, so try the old layout.
   public func recoverDataFromRSAPad(_ encryptedData: Data) -> Data? {
+    guard isValidEncryptedBlock(encryptedData) else { return nil }
     let keyAesEncrypted = [UInt8](rawDecrypt(encryptedData))
     guard keyAesEncrypted.count == 256 else { return nil }
     let aesEncrypted = Data(keyAesEncrypted[32..<256])
@@ -167,11 +174,16 @@ public struct RSAPrivateKey: Sendable {
     let dwh = [UInt8](dataWithHash)
     guard dwh.count == 224 else { return nil }
     let dataWithPadding = Data(dwh[0..<192].reversed())
-    let hash = Array(dwh[192..<224])
+    let hash = Data(dwh[192..<224])
 
-    let expected = Array(SHA256.hash(data: Data(tempKey) + dataWithPadding))
-    guard expected == hash else { return nil }
+    let expected = Data(SHA256.hash(data: Data(tempKey) + dataWithPadding))
+    guard MTProtoConstantTime.equals(expected, hash) else { return nil }
     return dataWithPadding
+  }
+
+  private func isValidEncryptedBlock(_ encryptedData: Data) -> Bool {
+    guard modulusByteCount == 256, encryptedData.count == 256 else { return false }
+    return BigUInt(bigEndianBytes: encryptedData) < modulus
   }
 
   /// Whether `d` inverts `e` for this modulus: `(probe^e)^d mod n == probe`.
@@ -192,11 +204,13 @@ public struct RSAPrivateKey: Sendable {
   /// `SHA1(data)`, where `data` is the `dataLength` bytes following the prefix.
   public func verifyOldStyleHash(plaintextBlock: Data, dataLength: Int) -> Bool {
     let bytes = [UInt8](plaintextBlock)
-    guard bytes.count >= 20 + dataLength else { return false }
-    let expected = Array(bytes[0..<20])
+    guard dataLength >= 0, bytes.count >= 20, dataLength <= bytes.count - 20 else {
+      return false
+    }
+    let expected = Data(bytes[0..<20])
     let data = Data(bytes[20..<20 + dataLength])
-    let actual = Array(Insecure.SHA1.hash(data: data))
-    return expected == actual
+    let actual = Data(Insecure.SHA1.hash(data: data))
+    return MTProtoConstantTime.equals(expected, actual)
   }
 }
 

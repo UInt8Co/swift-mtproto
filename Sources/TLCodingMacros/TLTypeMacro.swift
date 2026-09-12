@@ -87,6 +87,8 @@ public struct TLTypeMacro: ExtensionMacro {
           }
 
           public init(tlFrom reader: inout TLReader) throws {
+              try reader.beginDecodingComposite()
+              defer { reader.endDecodingComposite() }
               let constructorID = try reader.readUInt32()
               switch constructorID {
               \(raw: decodeLines.joined(separator: "\n        "))

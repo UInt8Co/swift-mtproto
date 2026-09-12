@@ -28,6 +28,12 @@ one, where the block is `SHA1(data) ‖ data ‖ random`, and the RSA_PAD scheme
 "not this layout" — it has an integrity check — which is what makes the order
 matter.
 
+Both recovery methods reject ciphertext that is not a 256-byte integer below
+the modulus before private-key computation. Old-style recovery returns empty
+data for an invalid block; its caller must still verify the SHA-1 prefix.
+``RSAPrivateKey/rawDecrypt(_:)`` remains a low-level operation for validated
+inputs. RSA integrity checks use ``MTProtoConstantTime``.
+
 ``RSAPrivateKey/isConsistent()`` is worth calling at startup. A fingerprint is
 computed from `n` and `e` alone, so a key whose `d` belongs to a different key
 still advertises a *correct* fingerprint: clients find it, encrypt to it, and the
@@ -56,6 +62,10 @@ over a 2048-bit group, per <https://core.telegram.org/api/srp>. The group is an
 rotate it; ``SRP/Group/telegram2048`` is the well-known one. Naming follows the
 spec: `salt1` is the client salt, `salt2` the server salt, and every group element
 is 256 bytes big-endian.
+
+Proof verification rejects an `A` that is not 256 bytes or an `M1` that is not
+32 bytes before big-integer work. Callers must also bound concurrent handshakes
+and password checks: valid cryptographic operations remain expensive.
 
 ## Constant time
 

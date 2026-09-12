@@ -33,6 +33,15 @@ declared bare in TL schemas.
 
 Everything composes: vectors of objects, nested objects, enums inside vectors.
 
+Decoding untrusted data has resource limits separate from the wire format.
+``TLReader/Limits`` defaults to 128 active composite decoders and 1,000,000
+vector elements in total per reader, including bare elements with no fields.
+Exceeding either throws ``TLError``. Applications decoding unusually large
+trusted values can supply different limits to ``TLReader``. The macros and
+arrays share this budget; custom recursive decoders must pair
+``TLReader/beginDecodingComposite()`` with ``TLReader/endDecodingComposite()``
+in `defer`. An outer transport must still bound input and decompression sizes.
+
 ```swift
 // resPQ#05162463 from the MTProto handshake:
 @TLObject(id: 0x05162463)

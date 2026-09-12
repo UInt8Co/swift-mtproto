@@ -116,10 +116,12 @@ private func synthesizedMembers(_ structDecl: StructDeclSyntax) -> [DeclSyntax] 
   // they are not initializer parameters.
   let assignable = collectStoredProperties(structDecl)
     .filter { !$0.isFlagsField && $0.isAssignable }
-  let parameters = assignable
+  let parameters =
+    assignable
     .map { "\($0.name): \($0.type)\($0.defaultValue.map { " = \($0)" } ?? "")" }
     .joined(separator: ", ")
-  let assignments = assignable
+  let assignments =
+    assignable
     .map { "self.\($0.name) = \($0.name)" }
     .joined(separator: "\n  ")
   return [
@@ -578,6 +580,8 @@ private func expandStruct(
         }
 
         public init(tlBareFrom reader: inout TLReader) throws {
+            try reader.beginDecodingComposite()
+            defer { reader.endDecodingComposite() }
             \(raw: decodeLines.joined(separator: "\n    "))
         }
     }
@@ -780,6 +784,8 @@ private func expandEnum(
         }
 
         public init(tlFrom reader: inout TLReader) throws {
+            try reader.beginDecodingComposite()
+            defer { reader.endDecodingComposite() }
             let constructorID = try reader.readUInt32()
             switch constructorID {
             \(raw: decodeLines.joined(separator: "\n        "))
