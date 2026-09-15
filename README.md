@@ -12,7 +12,7 @@ implementation with a minimum client implementation is available at
 [UInt8Co/swift-nio-mtproto](https://github.com/UInt8Co/swift-nio-mtproto).
 
 ```swift
-.package(url: "https://github.com/UInt8Co/swift-mtproto", from: "1.0.0")
+.package(url: "https://github.com/UInt8Co/swift-mtproto", from: "2.0.0")
 ```
 
 ## Modules
