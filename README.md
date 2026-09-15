@@ -22,7 +22,7 @@ implementation with a minimum client implementation is available at
 | `TLCoding` | The TL wire format as Swift macros: annotate a type with `@TLObject` and it gains constructor numbers, 32-bit-aligned layout, length-prefixed strings, vectors and `flags.N?` conditionals |
 | `MTProtoGenKit` | The `mtproto-gen-swift` generator: TL schema JSON → Swift built on `TLCoding`, optionally split across modules for build caching |
 | `MTProtoBaseSchema` | The generated MTProto service schema — the auth-key handshake and service messages — and the root `TL` namespace an API schema extends |
-| `MTProtoCrypto` | AES-IGE, the handshake and message KDFs (MTProto 1.0 and 2.0), RSA (raw and `RSA_PAD`), PQ factoring, SRP-6a for 2FA, and a constant-time comparison |
+| `MTProtoCrypto` | AES-IGE, the handshake and message KDFs (MTProto 1.0 and 2.0), RSA (raw and `RSA_PAD`), PQ factoring, SRP-6a for 2FA (both the server and the client half), and a constant-time comparison |
 | `MTProtoPagination` | Telegram's vector-hash / `*NotModified` protocol and offset/limit paging math, per [api/offsets](https://corefork.telegram.org/api/offsets) |
 | `MTProtoUtils` | The dependency-free shared bits: CRC32, hex coding, and `TLInt53` (web-safe 53-bit ids) |
 

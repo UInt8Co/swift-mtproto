@@ -67,6 +67,10 @@ Proof verification rejects an `A` that is not 256 bytes or an `M1` that is not
 32 bytes before big-integer work. Callers must also bound concurrent handshakes
 and password checks: valid cryptographic operations remain expensive.
 
+``TelegramSRP`` is the other half — what a client computes from the password and
+the challenge `account.getPassword` reports, to send as `inputCheckPasswordSRP`.
+The two are each other's test: a proof one produces has to verify in the other.
+
 ## Constant time
 
 Comparisons of secret-dependent values go through ``MTProtoConstantTime`` so
@@ -93,6 +97,7 @@ handshake exponentiations it exists for.
 ### Passwords
 
 - ``SRP``
+- ``TelegramSRP``
 
 ### Support
 
