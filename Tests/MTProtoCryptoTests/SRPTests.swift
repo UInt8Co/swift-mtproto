@@ -9,8 +9,8 @@ import Testing
   import Foundation
 #endif
 
-/// Exercises the SRP-6a 2FA core (`SRP`) end to end: a faithful re-implementation
-/// of the *client* proof (mirroring tdlib's
+/// Exercises the SRP-6a 2FA core (`SRP` and `SRP.Server`) end to end: a faithful
+/// re-implementation of the *client* proof (mirroring tdlib's
 /// `PasswordManager::get_input_check_password`) must be accepted by the server
 /// verifier, and any tampering must be rejected. This is the known-answer guard
 /// for the crypto the e2e (mtcute) relies on.
@@ -67,7 +67,7 @@ struct SRPTests {
 
     // Server challenge.
     let b = Self.random(256)
-    let srpB = SRP.srpB(group: Self.group, verifier: v, serverSecret: b)
+    let srpB = SRP.Server.srpB(group: Self.group, verifier: v, serverSecret: b)
     #expect(srpB.count == 256)
 
     // Client answers.
@@ -76,7 +76,7 @@ struct SRPTests {
     #expect(proof.a.count == 256)
 
     #expect(
-      SRP.verifyClientProof(
+      SRP.Server.verifyClientProof(
         group: Self.group, salt1: salt1, salt2: salt2, verifier: v, serverSecret: b, a: proof.a,
         m1: proof.m1))
   }
@@ -89,13 +89,13 @@ struct SRPTests {
       group: Self.group,
       passwordHash: SRP.passwordHash(password: Data("hunter2".utf8), salt1: salt1, salt2: salt2))
     let b = Self.random(256)
-    let srpB = SRP.srpB(group: Self.group, verifier: v, serverSecret: b)
+    let srpB = SRP.Server.srpB(group: Self.group, verifier: v, serverSecret: b)
     let a = Self.random(256)
     // Client proves a *different* password against the same challenge.
     let proof = Self.clientProof(
       password: Data("wrong".utf8), salt1: salt1, salt2: salt2, srpB: srpB, a: a)
     #expect(
-      !SRP.verifyClientProof(
+      !SRP.Server.verifyClientProof(
         group: Self.group, salt1: salt1, salt2: salt2, verifier: v, serverSecret: b, a: proof.a,
         m1: proof.m1))
   }
@@ -108,13 +108,13 @@ struct SRPTests {
       group: Self.group,
       passwordHash: SRP.passwordHash(password: Data("pw".utf8), salt1: salt1, salt2: salt2))
     let b = Self.random(256)
-    let srpB = SRP.srpB(group: Self.group, verifier: v, serverSecret: b)
+    let srpB = SRP.Server.srpB(group: Self.group, verifier: v, serverSecret: b)
     let a = Self.random(256)
     var proof = Self.clientProof(
       password: Data("pw".utf8), salt1: salt1, salt2: salt2, srpB: srpB, a: a)
     proof.m1[0] ^= 0xFF
     #expect(
-      !SRP.verifyClientProof(
+      !SRP.Server.verifyClientProof(
         group: Self.group, salt1: salt1, salt2: salt2, verifier: v, serverSecret: b, a: proof.a,
         m1: proof.m1))
   }
@@ -131,7 +131,7 @@ struct SRPTests {
     for bad in [BigUInt(0), BigUInt(1), Self.group.p - BigUInt(1), Self.group.p] {
       let a = bad.bigEndianBytes(byteCount: 256)
       #expect(
-        !SRP.verifyClientProof(
+        !SRP.Server.verifyClientProof(
           group: Self.group, salt1: salt1, salt2: salt2, verifier: v, serverSecret: b, a: a, m1: m1)
       )
     }
@@ -150,13 +150,13 @@ struct SRPTests {
     let m1 = Data(repeating: 0, count: 32)
     for badA in [Data(), Data([2]), Data(repeating: 0, count: 1024 * 1024) + validA] {
       #expect(
-        !SRP.verifyClientProof(
+        !SRP.Server.verifyClientProof(
           group: Self.group, salt1: Data(), salt2: Data(), verifier: Data(),
           serverSecret: Data(), a: badA, m1: m1))
     }
     for badM1 in [Data(), Data(repeating: 0, count: 31), Data(repeating: 0, count: 33)] {
       #expect(
-        !SRP.verifyClientProof(
+        !SRP.Server.verifyClientProof(
           group: Self.group, salt1: Data(), salt2: Data(), verifier: Data(),
           serverSecret: Data(), a: validA, m1: badM1))
     }
@@ -173,7 +173,7 @@ struct SRPTests {
       SRP.xor(SRP.h(Self.group.pBytes), SRP.h(Self.group.gBytes))
         + SRP.h(Data()) + SRP.h(Data()) + a + one + SRP.h(one))
     #expect(
-      !SRP.verifyClientProof(
+      !SRP.Server.verifyClientProof(
         group: Self.group, salt1: Data(), salt2: Data(), verifier: Data(),
         serverSecret: Data(), a: a, m1: proof))
   }

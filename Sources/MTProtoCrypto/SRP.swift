@@ -7,10 +7,15 @@ import CryptoExtras
   import Foundation
 #endif
 
-/// The cryptographic core of two-step verification (2FA): SRP-6a over a 2048-bit
-/// group, i.e. Telegram's
+/// Two-step verification (2FA): SRP-6a over a 2048-bit group, i.e. Telegram's
 /// `passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow`, per
 /// <https://core.telegram.org/api/srp>.
+///
+/// This type holds what both ends share — the group, the password hash and the
+/// verifier derived from it. The two halves of an exchange are ``SRP/Server``
+/// (stores the verifier, offers `B`, checks the proof) and ``SRP/Client``
+/// (turns a password and a challenge into `inputCheckPasswordSRP`), and they are
+/// each other's test: a proof one produces has to verify in the other.
 ///
 /// Every function here is pure — the only entropy is the caller-supplied secret
 /// `b` or `a` — so all of it is known-answer testable.
@@ -20,7 +25,8 @@ import CryptoExtras
 /// client salt (extended with 32 random bytes when a password is set), `salt2` the
 /// server salt, and every group element is 256 bytes big-endian (``size``).
 public enum SRP {
-  /// The group size in bytes (2048 bits).
+  /// The group size in bytes (2048 bits). Every group element travels padded to
+  /// this width, and is hashed padded.
   public static let size = 256
 
   /// An SRP group: the prime `p` and generator `g`, plus the values derived
@@ -103,52 +109,6 @@ public enum SRP {
   public static func verifier(group: Group, passwordHash x: Data) -> Data {
     group.gBig.power(BigUInt(bigEndianBytes: x), modulus: group.p)
       .bigEndianBytes(byteCount: size)
-  }
-
-  // MARK: - Login challenge (server side)
-
-  /// The server's public value `B := (k*v + pow(g, b)) mod p`, 256 bytes, where
-  /// `v` is the stored verifier and `b` the fresh per-challenge server secret.
-  public static func srpB(group: Group, verifier v: Data, serverSecret b: Data) -> Data {
-    let vBig = BigUInt(bigEndianBytes: v)
-    let gb = group.gBig.power(BigUInt(bigEndianBytes: b), modulus: group.p)
-    let kv = (group.k * vBig) % group.p
-    return ((kv + gb) % group.p).bigEndianBytes(byteCount: size)
-  }
-
-  /// Verifies a client's `inputCheckPasswordSRP`: recomputes the server proof
-  /// `M2` from the stored verifier `v`, the challenge secret `b` and the salts,
-  /// and constant-time compares it to the client's `M1`.
-  ///
-  /// Server session key (spec §"Server"): `S = pow(g_a * pow(v, u), b) mod p`,
-  /// `M2 = H(H(p) xor H(g) | H(salt1) | H(salt2) | g_a | g_b | H(S))`. `g_a` is
-  /// the client's `A` exactly as received (256 bytes); `g_b` the `B` we sent.
-  public static func verifyClientProof(
-    group: Group, salt1: Data, salt2: Data, verifier v: Data, serverSecret b: Data,
-    a clientA: Data, m1: Data
-  ) -> Bool {
-    // Reject malformed wire values before allocating bignums or doing any
-    // modular exponentiations. SRP hashes group elements padded to 2048 bits.
-    guard clientA.count == size, m1.count == SHA256.byteCount else { return false }
-    let p = group.p
-    let aBig = BigUInt(bigEndianBytes: clientA)
-    // Reject A outside (1, p-1): the spec/tdlib guard against the degenerate
-    // values that would force a known session key.
-    guard aBig > BigUInt(1), aBig < p - BigUInt(1) else { return false }
-
-    let bBytes = srpB(group: group, verifier: v, serverSecret: b)
-    let u = BigUInt(bigEndianBytes: h(clientA + bBytes))
-    guard !u.isZero else { return false }
-
-    let vBig = BigUInt(bigEndianBytes: v)
-    // S = (A * v^u)^b mod p.
-    let base = (aBig * vBig.power(u, modulus: p)) % p
-    let s = base.power(BigUInt(bigEndianBytes: b), modulus: p)
-    let kA = h(s.bigEndianBytes(byteCount: size))
-
-    let m2 = h(
-      xor(h(group.pBytes), h(group.gBytes)) + h(salt1) + h(salt2) + clientA + bBytes + kA)
-    return MTProtoConstantTime.equals(m2, m1)
   }
 
   // MARK: - Helpers

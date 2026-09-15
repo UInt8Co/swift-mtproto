@@ -63,11 +63,13 @@ rotate it; ``SRP/Group/telegram2048`` is the well-known one. Naming follows the
 spec: `salt1` is the client salt, `salt2` the server salt, and every group element
 is 256 bytes big-endian.
 
-Proof verification rejects an `A` that is not 256 bytes or an `M1` that is not
-32 bytes before big-integer work. Callers must also bound concurrent handshakes
-and password checks: valid cryptographic operations remain expensive.
+``SRP/Server`` is what a server does with a password — it stores a verifier,
+offers a `B` and checks the client's proof. Verification rejects an `A` that is
+not 256 bytes or an `M1` that is not 32 bytes before big-integer work. Callers
+must also bound concurrent handshakes and password checks: valid cryptographic
+operations remain expensive.
 
-``TelegramSRP`` is the other half — what a client computes from the password and
+``SRP/Client`` is the other half — what a client computes from the password and
 the challenge `account.getPassword` reports, to send as `inputCheckPasswordSRP`.
 The two are each other's test: a proof one produces has to verify in the other.
 
@@ -97,7 +99,7 @@ handshake exponentiations it exists for.
 ### Passwords
 
 - ``SRP``
-- ``TelegramSRP``
+- ``SRPError``
 
 ### Support
 
