@@ -1,4 +1,4 @@
-// swift-tools-version: 6.3
+// swift-tools-version: 6.4
 
 import CompilerPluginSupport
 import PackageDescription
@@ -16,10 +16,10 @@ let package = Package(
     .executable(name: "mtproto-gen-swift", targets: ["MTProtoGenSwiftCLI"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/swiftlang/swift-syntax.git", "601.0.0"..<"700.0.0"),
-    .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
-    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
-    .package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"),
+    .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0"),
+    .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.0"),
+    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.2"),
+    .package(url: "https://github.com/apple/swift-system.git", from: "1.8.1"),
   ],
   targets: [
     .target(

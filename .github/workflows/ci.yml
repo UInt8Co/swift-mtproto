@@ -1,6 +1,6 @@
 # Builds and runs the Swift unit tests on every push.
 #
-# The job runs in the swift:6.3 toolchain image and leans on caching:
+# The job runs in the swift:6.4.0-noble toolchain image and leans on caching:
 #   * ~/.cache/org.swift.swiftpm — cloned SwiftPM dependencies (swift-syntax,
 #     swift-crypto …)
 #   * .build                     — Swift incremental build products
@@ -22,7 +22,7 @@ jobs:
   unit-tests:
     name: Swift unit tests
     runs-on: ubuntu-latest
-    container: swift:6.3
+    container: swift:6.4.0-noble
     steps:
       - name: Check out
         uses: actions/checkout@v6
@@ -39,10 +39,10 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .build
-          key: swift-unit-${{ runner.os }}-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
+          key: swift-unit-${{ runner.os }}-swift6.4.0-${{ hashFiles('Package.resolved') }}-${{ github.sha }}
           restore-keys: |
-            swift-unit-${{ runner.os }}-${{ hashFiles('Package.resolved') }}-
-            swift-unit-${{ runner.os }}-
+            swift-unit-${{ runner.os }}-swift6.4.0-${{ hashFiles('Package.resolved') }}-
+            swift-unit-${{ runner.os }}-swift6.4.0-
 
       - name: Run unit tests
         run: swift test
