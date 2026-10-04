@@ -50,6 +50,17 @@
     escaped(camelCase(tlFieldName))
   }
 
+  /// A call label for an already mapped property name. Keyword bindings still
+  /// need backticks in expressions; call labels only require them for `inout`.
+  static func argumentLabel(_ propertyName: String) -> String {
+    guard propertyName.first == "`", propertyName.last == "`" else { return propertyName }
+    let identifier = String(propertyName.dropFirst().dropLast())
+    switch identifier {
+    case "inout": return propertyName
+    default: return identifier
+    }
+  }
+
   /// Swift enum name for a TL namespace: `auth` → `Auth`.
   @_spi(GeneratorInternals) public static func namespaceEnumName(_ tlNamespace: String) -> String {
     capitalizedFirst(camelCase(tlNamespace))

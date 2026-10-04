@@ -117,7 +117,7 @@ extension ResolvedSchema {
       }
       .joined(separator: ", ")
     let argumentList = parameters
-      .map { "\($0.name): \($0.name)" }
+      .map { "\(Naming.argumentLabel($0.name)): \($0.name)" }
       .joined(separator: ", ")
 
     let genericClause = method.isGeneric ? "<Query: TLFunction>" : ""
