@@ -68,9 +68,15 @@ let package = Package(
       name: "MTProtoBaseSchema",
       dependencies: ["TLCoding"]
     ),
+    // AES-IGE on the CPU's AES instructions; `MTProtoCrypto` falls back to
+    // swift-crypto when they are missing.
+    .target(
+      name: "CMTProtoAESIGE"
+    ),
     .target(
       name: "MTProtoCrypto",
       dependencies: [
+        "CMTProtoAESIGE",
         "MTProtoUtils",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "CryptoExtras", package: "swift-crypto"),

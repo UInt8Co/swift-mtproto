@@ -10,6 +10,13 @@ without a standard padding. This module implements exactly those pieces, over
 swift-crypto, as pure functions of their inputs — so each one can be checked
 against the published test vectors.
 
+The one exception to "over swift-crypto" is ``AESIGE``: IGE is a serial chain
+of single-block operations, and swift-crypto would expand the key again for
+every block. On CPUs with AES instructions (AES-NI, the ARMv8 Cryptography
+Extensions — detected at run time) the chain runs in a small C target that
+expands the key once per message; elsewhere it falls back to swift-crypto. Both
+paths are constant-time with respect to key and data.
+
 It knows nothing about sessions, transports or schemas: values in, values out.
 
 ## The handshake
