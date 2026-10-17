@@ -17,6 +17,12 @@ Extensions — detected at run time) the chain runs in a small C target that
 expands the key once per message; elsewhere it falls back to swift-crypto. Both
 paths are constant-time with respect to key and data.
 
+The hardware path makes a best effort to erase its temporary key material,
+including compiler stack spills and, where the compiler supports it, used
+volatile registers. This is not a guarantee of erasure and does not clear the
+caller's key or input buffers. The implementation and assembly-review constraints
+live in `Sources/CMTProtoAESIGE/aesige.c`.
+
 It knows nothing about sessions, transports or schemas: values in, values out.
 
 ## The handshake
