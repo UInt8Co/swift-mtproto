@@ -89,7 +89,17 @@ public struct TLReader: Sendable {
   public mutating func readRawBytes(_ count: Int) throws -> Data {
     try require(count)
     defer { offset += count }
-    return Data(bytes[offset..<offset + count])
+    return bytes.withUnsafeBytes {
+      Data(UnsafeRawBufferPointer(rebasing: $0[offset..<offset + count]))
+    }
+  }
+
+  /// A little-endian integer at `offset`; the caller has checked the length.
+  @inline(__always)
+  private func load<T: FixedWidthInteger>(_: T.Type) -> T {
+    bytes.withUnsafeBytes {
+      T(littleEndian: $0.loadUnaligned(fromByteOffset: offset, as: T.self))
+    }
   }
 
   /// Skips `count` bytes.
@@ -109,10 +119,7 @@ public struct TLReader: Sendable {
   public mutating func readUInt32() throws -> UInt32 {
     try require(4)
     defer { offset += 4 }
-    return UInt32(bytes[offset])
-      | UInt32(bytes[offset + 1]) << 8
-      | UInt32(bytes[offset + 2]) << 16
-      | UInt32(bytes[offset + 3]) << 24
+    return load(UInt32.self)
   }
 
   public mutating func readInt32() throws -> Int32 {
@@ -120,9 +127,14 @@ public struct TLReader: Sendable {
   }
 
   public mutating func readUInt64() throws -> UInt64 {
-    let low = try readUInt32()
-    let high = try readUInt32()
-    return UInt64(low) | UInt64(high) << 32
+    guard bytesRemaining >= 8 else {
+      // Truncated: fail exactly as two 32-bit reads would (same error, same offset).
+      let low = try readUInt32()
+      let high = try readUInt32()
+      return UInt64(low) | UInt64(high) << 32
+    }
+    defer { offset += 8 }
+    return load(UInt64.self)
   }
 
   public mutating func readInt64() throws -> Int64 {
@@ -133,10 +145,7 @@ public struct TLReader: Sendable {
   /// consuming it.
   public func peekUInt32() throws -> UInt32 {
     try require(4)
-    return UInt32(bytes[offset])
-      | UInt32(bytes[offset + 1]) << 8
-      | UInt32(bytes[offset + 2]) << 16
-      | UInt32(bytes[offset + 3]) << 24
+    return load(UInt32.self)
   }
 
   // MARK: `double`

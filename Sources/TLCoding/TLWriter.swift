@@ -35,11 +35,19 @@ public struct TLWriter: Sendable {
 
   // MARK: Fixed-width integers (`int`, `long`)
 
+  /// Appends the first `count` little-endian bytes of `value` in one call;
+  /// per-byte appends dominate encoding time otherwise.
+  @inline(__always)
+  private mutating func appendLittleEndian<T: FixedWidthInteger>(
+    _ value: T, count: Int = MemoryLayout<T>.size
+  ) {
+    withUnsafeBytes(of: value.littleEndian) { bytes in
+      data.append(bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), count: count)
+    }
+  }
+
   public mutating func writeUInt32(_ value: UInt32) {
-    data.append(UInt8(truncatingIfNeeded: value))
-    data.append(UInt8(truncatingIfNeeded: value >> 8))
-    data.append(UInt8(truncatingIfNeeded: value >> 16))
-    data.append(UInt8(truncatingIfNeeded: value >> 24))
+    appendLittleEndian(value)
   }
 
   public mutating func writeInt32(_ value: Int32) {
@@ -47,8 +55,7 @@ public struct TLWriter: Sendable {
   }
 
   public mutating func writeUInt64(_ value: UInt64) {
-    writeUInt32(UInt32(truncatingIfNeeded: value))
-    writeUInt32(UInt32(truncatingIfNeeded: value >> 32))
+    appendLittleEndian(value)
   }
 
   public mutating func writeInt64(_ value: Int64) {
@@ -89,16 +96,13 @@ public struct TLWriter: Sendable {
       data.append(UInt8(count))
       headerSize = 1
     } else {
-      data.append(0xFE)
-      data.append(UInt8(truncatingIfNeeded: count))
-      data.append(UInt8(truncatingIfNeeded: count >> 8))
-      data.append(UInt8(truncatingIfNeeded: count >> 16))
+      appendLittleEndian(0xFE | UInt32(count) << 8)
       headerSize = 4
     }
     data.append(payload)
     let padding = (4 - (headerSize + count) % 4) % 4
-    for _ in 0..<padding {
-      data.append(0)
+    if padding > 0 {
+      appendLittleEndian(UInt32(0), count: padding)
     }
   }
 
