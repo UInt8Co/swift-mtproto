@@ -226,19 +226,17 @@ struct MTProtoCryptoTests {
 
   // MARK: - AES-IGE
 
-  @Test(arguments: AESIGETests.backends)
-  func aesIGEVector(backend: AESIGE.Backend) throws {
+  @Test func aesIGEVector() throws {
     let v = try loadVectors().ige
     let key = Data([UInt8](hex: v.key)!)
     let iv = Data([UInt8](hex: v.iv)!)
     let plain = Data([UInt8](hex: v.plain)!)
     let expectedCipher = Data([UInt8](hex: v.cipher)!)
 
-    let cipher = try AESIGE.transform(plain, key: key, iv: iv, encrypting: true, backend: backend)
+    let cipher = try AESIGE.encrypt(plain, key: key, iv: iv)
     #expect(cipher == expectedCipher)
 
-    let decrypted = try AESIGE.transform(
-      expectedCipher, key: key, iv: iv, encrypting: false, backend: backend)
+    let decrypted = try AESIGE.decrypt(expectedCipher, key: key, iv: iv)
     #expect(decrypted == plain)
   }
 

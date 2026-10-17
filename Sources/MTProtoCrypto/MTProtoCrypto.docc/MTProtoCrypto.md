@@ -10,18 +10,15 @@ without a standard padding. This module implements exactly those pieces, over
 swift-crypto, as pure functions of their inputs — so each one can be checked
 against the published test vectors.
 
-The one exception to "over swift-crypto" is ``AESIGE``: IGE is a serial chain
-of single-block operations, and swift-crypto would expand the key again for
-every block. On CPUs with AES instructions (AES-NI, the ARMv8 Cryptography
-Extensions — detected at run time) the chain runs in a small C target that
-expands the key once per message; elsewhere it falls back to swift-crypto. Both
-paths are constant-time with respect to key and data.
-
-The hardware path makes a best effort to erase its temporary key material,
-including compiler stack spills and, where the compiler supports it, used
-volatile registers. This is not a guarantee of erasure and does not clear the
-caller's key or input buffers. The implementation and assembly-review constraints
-live in `Sources/CMTProtoAESIGE/aesige.c`.
+``AESIGE`` reaches one level below swift-crypto's API: IGE is a serial chain of
+single-block operations, and swift-crypto's block functions expand the key again
+for every block. So it binds the raw AES functions of the BoringSSL copy that
+swift-crypto already links, expands the key once per message, and implements
+only the chaining itself, in Swift. BoringSSL picks the CPU's AES instructions
+when present and constant-time code otherwise. The expanded key lives in one
+noncopyable value that is cleared with `OPENSSL_cleanse` afterwards. Erasure
+goes no further than BoringSSL's own: vector registers are not scrubbed, nor
+are the caller's key and input buffers.
 
 It knows nothing about sessions, transports or schemas: values in, values out.
 

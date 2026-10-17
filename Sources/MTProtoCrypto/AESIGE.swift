@@ -1,5 +1,3 @@
-internal import CMTProtoAESIGE
-import Crypto
 import CryptoExtras
 
 #if canImport(FoundationEssentials)
@@ -19,40 +17,25 @@ import CryptoExtras
 /// p_i = D_K(c_i ⊕ p_{i-1}) ⊕ c_{i-1}
 /// ```
 ///
-/// swift-crypto does not expose IGE, and its single-block permutation expands the
-/// key on every call, so on CPUs with AES instructions the chain runs in the
-/// `CMTProtoAESIGE` C target instead; see the module overview.
+/// Only the chaining is implemented here. The block cipher is BoringSSL's, from
+/// the copy swift-crypto builds; see the module overview.
 public enum AESIGE {
   static let blockSize = 16
-
-  /// The implementation behind ``encrypt(_:key:iv:)`` and
-  /// ``decrypt(_:key:iv:)``. Internal so tests can pin each one.
-  enum Backend: Sendable, CaseIterable {
-    /// The CPU's AES instructions; only valid when ``hardwareAvailable``.
-    case hardware
-    /// swift-crypto: one CBC call for encryption, one block permutation per
-    /// block for decryption.
-    case swiftCrypto
-  }
-
-  static let hardwareAvailable = cmtproto_aes_hw_available() != 0
-  static let defaultBackend: Backend = hardwareAvailable ? .hardware : .swiftCrypto
+  typealias Block = SIMD16<UInt8>
 
   /// Encrypts `plaintext` (whose length must be a multiple of 16) with a
   /// 32-byte `key` and 32-byte `iv`.
   public static func encrypt(_ plaintext: Data, key: Data, iv: Data) throws -> Data {
-    try transform(plaintext, key: key, iv: iv, encrypting: true, backend: defaultBackend)
+    try transform(plaintext, key: key, iv: iv, encrypting: true)
   }
 
   /// Decrypts `ciphertext` (whose length must be a multiple of 16) with a
   /// 32-byte `key` and 32-byte `iv`.
   public static func decrypt(_ ciphertext: Data, key: Data, iv: Data) throws -> Data {
-    try transform(ciphertext, key: key, iv: iv, encrypting: false, backend: defaultBackend)
+    try transform(ciphertext, key: key, iv: iv, encrypting: false)
   }
 
-  static func transform(
-    _ input: Data, key: Data, iv: Data, encrypting: Bool, backend: Backend
-  ) throws -> Data {
+  static func transform(_ input: Data, key: Data, iv: Data, encrypting: Bool) throws -> Data {
     guard key.count == 32 else {
       throw MTProtoCryptoError.invalidKeySize(expected: 32, actual: key.count)
     }
@@ -64,112 +47,177 @@ public enum AESIGE {
     }
     guard !input.isEmpty else { return Data() }
 
-    switch backend {
-    case .hardware:
-      precondition(hardwareAvailable, "AES instructions are not available")
-      var output = Data(count: input.count)
-      key.withUnsafeBytes { key in
-        iv.withUnsafeBytes { iv in
-          input.withUnsafeBytes { input in
-            output.withUnsafeMutableBytes { output in
-              let cipher = encrypting ? cmtproto_aes256_ige_encrypt : cmtproto_aes256_ige_decrypt
-              cipher(
-                key.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                iv.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                input.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                output.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                input.count)
-            }
-          }
-        }
-      }
-      return output
-    case .swiftCrypto:
-      return encrypting
-        ? try swiftCryptoEncrypt(input, key: key, iv: iv)
-        : try swiftCryptoDecrypt(input, key: key, iv: iv)
+    var output = Data(count: input.count)
+    var schedule = AESKeySchedule()
+    defer { schedule.erase() }
+    schedule.expand(key.bytes, for: encrypting ? .encryption : .decryption)
+    var out = output.mutableBytes
+    if encrypting {
+      encrypt(input.bytes, into: &out, schedule: &schedule, iv: iv.bytes)
+    } else {
+      decrypt(input.bytes, into: &out, schedule: &schedule, iv: iv.bytes)
     }
+    return output
   }
 
   /// IGE encryption is CBC encryption in disguise: with `y_i = c_i ⊕ p_{i-1}`,
   /// `y_i = E_K(x_i ⊕ y_{i-1})` for `x_i = p_i ⊕ p_{i-2}` (`p_{-2} = 0`,
-  /// `y_{-1} = c_{-1}`). So one CBC call — one key expansion — does every block,
-  /// with a linear pass on either side.
-  private static func swiftCryptoEncrypt(_ plain: Data, key: Data, iv: Data) throws -> Data {
-    let words = plain.count / 8
-    var chained = Data(count: plain.count)
-    plain.withUnsafeBytes { p in
-      iv.withUnsafeBytes { iv in
-        chained.withUnsafeMutableBytes { x in
-          for j in 0..<words {
-            var word = p.loadUnaligned(fromByteOffset: 8 * j, as: UInt64.self)
-            if j >= 4 {
-              word ^= p.loadUnaligned(fromByteOffset: 8 * (j - 4), as: UInt64.self)
-            } else if j >= 2 {
-              word ^= iv.loadUnaligned(fromByteOffset: 8 * j, as: UInt64.self)
-            }
-            x.storeBytes(of: word, toByteOffset: 8 * j, as: UInt64.self)
-          }
-        }
+  /// `y_{-1} = c_{-1}`). So BoringSSL's CBC loop does the serial part, with a
+  /// linear pass on either side, a cache-sized chunk at a time.
+  private static func encrypt(
+    _ plain: RawSpan, into output: inout MutableRawSpan, schedule: inout AESKeySchedule,
+    iv: RawSpan
+  ) {
+    let chunkSize = 16 << 10
+    var chain = iv.loadBlock(at: 0)  // y_{i-1}
+    var older = Block()  // p_{i-2}
+    var previous = iv.loadBlock(at: 16)  // p_{i-1}
+    for start in stride(from: 0, to: plain.byteCount, by: chunkSize) {
+      let end = min(start + chunkSize, plain.byteCount)
+      let chunkPrevious = previous
+      for offset in stride(from: start, to: end, by: blockSize) {
+        let block = plain.loadBlock(at: offset)
+        output.storeBlock(block ^ older, at: offset)
+        (older, previous) = (previous, block)
+      }
+      schedule.cbcEncrypt(&output, range: start..<end, chain: &chain)
+      var mask = chunkPrevious
+      for offset in stride(from: start, to: end, by: blockSize) {
+        output.storeBlock(output.loadBlock(at: offset) ^ mask, at: offset)
+        mask = plain.loadBlock(at: offset)
       }
     }
-    var output = try AES._CBC.encrypt(
-      chained, using: SymmetricKey(data: key), iv: AES._CBC.IV(ivBytes: iv.prefix(16)),
-      noPadding: true)
-    plain.withUnsafeBytes { p in
-      iv.withUnsafeBytes { iv in
-        output.withUnsafeMutableBytes { y in
-          for j in 0..<words {
-            let previous =
-              j >= 2
-              ? p.loadUnaligned(fromByteOffset: 8 * (j - 2), as: UInt64.self)
-              : iv.loadUnaligned(fromByteOffset: 16 + 8 * j, as: UInt64.self)
-            let word = y.loadUnaligned(fromByteOffset: 8 * j, as: UInt64.self) ^ previous
-            y.storeBytes(of: word, toByteOffset: 8 * j, as: UInt64.self)
-          }
-        }
-      }
-    }
-    return output
   }
 
-  /// IGE decryption feeds each plaintext block into the next block's input, and
-  /// swift-crypto has no sequential mode over the inverse cipher, so this stays
-  /// one `AES.inversePermute` per block.
-  private static func swiftCryptoDecrypt(_ cipher: Data, key: Data, iv: Data) throws -> Data {
-    let symmetricKey = SymmetricKey(data: key)
-    var block = [UInt8](repeating: 0, count: blockSize)
-    var output = Data(count: cipher.count)
-    try cipher.withUnsafeBytes { c in
-      try output.withUnsafeMutableBytes { p in
-        var (prevCipher0, prevCipher1, prevPlain0, prevPlain1) = iv.withUnsafeBytes { iv in
-          (
-            iv.loadUnaligned(fromByteOffset: 0, as: UInt64.self),
-            iv.loadUnaligned(fromByteOffset: 8, as: UInt64.self),
-            iv.loadUnaligned(fromByteOffset: 16, as: UInt64.self),
-            iv.loadUnaligned(fromByteOffset: 24, as: UInt64.self)
-          )
-        }
-        for offset in stride(from: 0, to: c.count, by: blockSize) {
-          let cipher0 = c.loadUnaligned(fromByteOffset: offset, as: UInt64.self)
-          let cipher1 = c.loadUnaligned(fromByteOffset: offset + 8, as: UInt64.self)
-          block.withUnsafeMutableBytes { t in
-            t.storeBytes(of: cipher0 ^ prevPlain0, toByteOffset: 0, as: UInt64.self)
-            t.storeBytes(of: cipher1 ^ prevPlain1, toByteOffset: 8, as: UInt64.self)
-          }
-          try AES.inversePermute(&block, key: symmetricKey)
-          let (plain0, plain1) = block.withUnsafeBytes { t in
-            (
-              t.loadUnaligned(fromByteOffset: 0, as: UInt64.self) ^ prevCipher0,
-              t.loadUnaligned(fromByteOffset: 8, as: UInt64.self) ^ prevCipher1
-            )
-          }
-          p.storeBytes(of: plain0, toByteOffset: offset, as: UInt64.self)
-          p.storeBytes(of: plain1, toByteOffset: offset + 8, as: UInt64.self)
-          (prevCipher0, prevCipher1, prevPlain0, prevPlain1) = (cipher0, cipher1, plain0, plain1)
+  /// IGE decryption feeds each plaintext block into the next block's input,
+  /// which no BoringSSL mode does, so this is one block call per block.
+  private static func decrypt(
+    _ cipher: RawSpan, into output: inout MutableRawSpan, schedule: inout AESKeySchedule,
+    iv: RawSpan
+  ) {
+    var previousCipher = iv.loadBlock(at: 0)
+    var previousPlain = iv.loadBlock(at: 16)
+    for offset in stride(from: 0, to: cipher.byteCount, by: blockSize) {
+      let block = cipher.loadBlock(at: offset)
+      var state = block ^ previousPlain
+      schedule.decrypt(&state)
+      state ^= previousCipher
+      output.storeBlock(state, at: offset)
+      (previousCipher, previousPlain) = (block, state)
+    }
+  }
+}
+
+extension RawSpan {
+  @inline(__always)
+  fileprivate func loadBlock(at offset: Int) -> AESIGE.Block {
+    unsafeLoadUnaligned(fromByteOffset: offset, as: AESIGE.Block.self)
+  }
+}
+
+extension MutableRawSpan {
+  @inline(__always)
+  fileprivate func loadBlock(at offset: Int) -> AESIGE.Block {
+    unsafeLoadUnaligned(fromByteOffset: offset, as: AESIGE.Block.self)
+  }
+
+  @inline(__always)
+  fileprivate mutating func storeBlock(_ block: AESIGE.Block, at offset: Int) {
+    storeBytes(of: block, toByteOffset: offset, as: AESIGE.Block.self)
+  }
+}
+
+/// An AES-256 key expanded into BoringSSL's `AES_KEY`, for one direction.
+///
+/// Noncopyable and only ever used in place, so Swift keeps no copies of the
+/// expanded key; ``erase()`` clears it with `OPENSSL_cleanse`. That is the
+/// whole of the erasure: BoringSSL's hardware routines keep round keys in this
+/// storage and in vector registers, which are not scrubbed, and its software
+/// fallback for CPUs without AES or SIMD instructions builds an uncleared copy
+/// on its own stack.
+struct AESKeySchedule: ~Copyable {
+  enum Direction { case encryption, decryption }
+
+  // `AES_KEY` is 61 32-bit words. SIMD64 is fixed-size inline storage that
+  // still deploys to macOS 15; InlineArray needs the Swift 6.2 runtime.
+  private var storage = SIMD64<UInt32>()
+
+  mutating func expand(_ key: RawSpan, for direction: Direction) {
+    precondition(key.byteCount == 32)
+    let status = key.withUnsafeBytes { key in
+      withUnsafeMutableBytes(of: &storage) { schedule in
+        switch direction {
+        case .encryption: boringSSLAESSetEncryptKey(key.baseAddress!, 256, schedule.baseAddress!)
+        case .decryption: boringSSLAESSetDecryptKey(key.baseAddress!, 256, schedule.baseAddress!)
         }
       }
     }
-    return output
+    precondition(status == 0)
+  }
+
+  /// Applies the inverse cipher to `block`. Requires a `.decryption` schedule.
+  @inline(__always)
+  mutating func decrypt(_ block: inout AESIGE.Block) {
+    withUnsafeMutableBytes(of: &block) { block in
+      withUnsafeBytes(of: &storage) { schedule in
+        boringSSLAESDecrypt(block.baseAddress!, block.baseAddress!, schedule.baseAddress!)
+      }
+    }
+  }
+
+  /// CBC-encrypts `range` of `buffer` in place from the chaining value `chain`,
+  /// which is left holding the last ciphertext block. Requires an `.encryption`
+  /// schedule.
+  mutating func cbcEncrypt(
+    _ buffer: inout MutableRawSpan, range: Range<Int>, chain: inout AESIGE.Block
+  ) {
+    precondition(range.lowerBound >= 0 && range.upperBound <= buffer.byteCount)
+    buffer.withUnsafeMutableBytes { buffer in
+      withUnsafeBytes(of: &storage) { schedule in
+        withUnsafeMutableBytes(of: &chain) { chain in
+          let start = buffer.baseAddress! + range.lowerBound
+          boringSSLAESCBCEncrypt(
+            start, start, range.count, schedule.baseAddress!, chain.baseAddress!, 1)
+        }
+      }
+    }
+  }
+
+  mutating func erase() {
+    withUnsafeMutableBytes(of: &storage) { boringSSLCleanse($0.baseAddress!, $0.count) }
+  }
+
+  /// For tests; reads the storage in place rather than copying it.
+  mutating func isErased() -> Bool {
+    withUnsafeBytes(of: &storage) { $0.allSatisfy { $0 == 0 } }
   }
 }
+
+// BoringSSL's raw AES API (`<openssl/aes.h>`, `<openssl/mem.h>`). swift-crypto
+// builds BoringSSL into `CryptoExtras` on every platform, with its symbols
+// prefixed, but does not export the module; these bind those symbols. If
+// swift-crypto ever renames them, linking fails rather than anything at run time.
+// BoringSSL dispatches to the CPU's AES instructions when present and to
+// constant-time code otherwise.
+
+@_extern(c, "CCryptoBoringSSL_AES_set_encrypt_key")
+private func boringSSLAESSetEncryptKey(
+  _ key: UnsafeRawPointer, _ bits: CUnsignedInt, _ schedule: UnsafeMutableRawPointer
+) -> CInt
+
+@_extern(c, "CCryptoBoringSSL_AES_set_decrypt_key")
+private func boringSSLAESSetDecryptKey(
+  _ key: UnsafeRawPointer, _ bits: CUnsignedInt, _ schedule: UnsafeMutableRawPointer
+) -> CInt
+
+@_extern(c, "CCryptoBoringSSL_AES_decrypt")
+private func boringSSLAESDecrypt(
+  _ input: UnsafeRawPointer, _ output: UnsafeMutableRawPointer, _ schedule: UnsafeRawPointer)
+
+@_extern(c, "CCryptoBoringSSL_AES_cbc_encrypt")
+private func boringSSLAESCBCEncrypt(
+  _ input: UnsafeRawPointer, _ output: UnsafeMutableRawPointer, _ length: Int,
+  _ schedule: UnsafeRawPointer, _ iv: UnsafeMutableRawPointer, _ encrypt: CInt)
+
+@_extern(c, "CCryptoBoringSSL_OPENSSL_cleanse")
+private func boringSSLCleanse(_ buffer: UnsafeMutableRawPointer, _ length: Int)

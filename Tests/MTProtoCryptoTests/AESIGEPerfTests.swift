@@ -18,27 +18,20 @@ import Testing
 /// Prints the median of several runs; never asserts on timing.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["MTPROTO_PERF"] != nil))
 struct AESIGEPerfTests {
-  @Test(arguments: [1 << 10, 64 << 10, 1 << 20])
+  @Test(arguments: [64, 256, 1 << 10, 4 << 10, 64 << 10, 512 << 10, 1 << 20])
   func throughput(size: Int) throws {
     let key = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 1) })
     let iv = Data((0..<32).map { UInt8(truncatingIfNeeded: $0 &* 13 &+ 5) })
     let plain = Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31) })
     let iterations = max(1, (16 << 20) / size)
-    for backend in AESIGE.Backend.allCases where backend != .hardware || AESIGE.hardwareAvailable {
-      let cipher = try AESIGE.transform(
-        plain, key: key, iv: iv, encrypting: true, backend: backend)
-      let encrypt = try medianMBps(bytes: size * iterations) {
-        for _ in 0..<iterations {
-          _ = try AESIGE.transform(plain, key: key, iv: iv, encrypting: true, backend: backend)
-        }
-      }
-      let decrypt = try medianMBps(bytes: size * iterations) {
-        for _ in 0..<iterations {
-          _ = try AESIGE.transform(cipher, key: key, iv: iv, encrypting: false, backend: backend)
-        }
-      }
-      print("AESIGE \(backend) \(size) B: encrypt \(encrypt) MB/s, decrypt \(decrypt) MB/s")
+    let cipher = try AESIGE.encrypt(plain, key: key, iv: iv)
+    let encrypt = try medianMBps(bytes: size * iterations) {
+      for _ in 0..<iterations { _ = try AESIGE.encrypt(plain, key: key, iv: iv) }
     }
+    let decrypt = try medianMBps(bytes: size * iterations) {
+      for _ in 0..<iterations { _ = try AESIGE.decrypt(cipher, key: key, iv: iv) }
+    }
+    print("AESIGE \(size) B: encrypt \(encrypt) MB/s, decrypt \(decrypt) MB/s")
   }
 }
 

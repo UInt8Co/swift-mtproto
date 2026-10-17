@@ -1,5 +1,3 @@
-import CMTProtoAESIGE
-import CMTProtoAESIGETestSupport
 import Crypto
 import CryptoExtras
 import Testing
@@ -12,151 +10,79 @@ import Testing
   import Foundation
 #endif
 
-/// Every ``AESIGE`` backend against known answers and against the plain
-/// block-by-block construction over swift-crypto.
+/// ``AESIGE`` against known answers and against the plain block-by-block
+/// construction over swift-crypto.
 struct AESIGETests {
-  static let backends = AESIGE.Backend.allCases.filter {
-    $0 != .hardware || AESIGE.hardwareAvailable
-  }
-
-  @Test func hardwareDetectionMatchesCPU() {
-    let supported = cmtproto_test_cpu_supports_aes()
-    if supported >= 0 {
-      #expect(
-        AESIGE.hardwareAvailable == (supported == 1),
-        "AES detection disagrees with the host CPU; hardware tests must not silently disappear")
-      #expect((cmtproto_aes_hw_available() != 0) == (supported == 1))
-      #expect(AESIGE.defaultBackend == (supported == 1 ? .hardware : .swiftCrypto))
-    }
-  }
-
   /// FIPS-197 Appendix C.3: with a zero IV a single IGE block is the bare cipher.
-  @Test(arguments: backends)
-  func fips197SingleBlock(backend: AESIGE.Backend) throws {
+  @Test func fips197SingleBlock() throws {
     let key = Data((0..<32).map { UInt8($0) })
     let plain = Data([UInt8](hex: "00112233445566778899aabbccddeeff")!)
     let cipher = Data([UInt8](hex: "8ea2b7ca516745bfeafc49904b496089")!)
     let iv = Data(count: 32)
-    #expect(
-      try AESIGE.transform(plain, key: key, iv: iv, encrypting: true, backend: backend) == cipher)
-    #expect(
-      try AESIGE.transform(cipher, key: key, iv: iv, encrypting: false, backend: backend) == plain)
+    #expect(try AESIGE.encrypt(plain, key: key, iv: iv) == cipher)
+    #expect(try AESIGE.decrypt(cipher, key: key, iv: iv) == plain)
   }
 
-  @Test(arguments: backends)
-  func matchesBlockByBlockReference(backend: AESIGE.Backend) throws {
+  @Test func matchesBlockByBlockReference() throws {
     var rng = SplitMix64(seed: 0x6D74_7072_6F74_6F)
-    let lengths = Array(0...40) + [255, 256, 1024, 4096]
+    // Encryption works in 1024-block chunks; cover a short final chunk too.
+    let lengths = Array(0...40) + [255, 256, 1023, 1024, 1025, 2049, 4096]
     for (index, blocks) in (lengths + lengths).enumerated() {
       let key = rng.data(count: 32)
       let iv = rng.data(count: 32)
       let input = rng.data(count: blocks * 16)
-      let cipher = try AESIGE.transform(
-        input, key: key, iv: iv, encrypting: true, backend: backend)
+      let cipher = try AESIGE.encrypt(input, key: key, iv: iv)
       #expect(cipher == (try referenceIGE(input, key: key, iv: iv, encrypting: true)), "\(index)")
+      #expect(try AESIGE.decrypt(cipher, key: key, iv: iv) == input, "\(index)")
+      // Arbitrary ciphertext, not only ciphertext this implementation produced.
       #expect(
-        try AESIGE.transform(cipher, key: key, iv: iv, encrypting: false, backend: backend)
-          == input, "\(index)")
-      // Arbitrary ciphertext, not only ciphertext this backend produced.
-      #expect(
-        try AESIGE.transform(input, key: key, iv: iv, encrypting: false, backend: backend)
+        try AESIGE.decrypt(input, key: key, iv: iv)
           == (try referenceIGE(input, key: key, iv: iv, encrypting: false)), "\(index)")
     }
   }
 
-  /// Inputs that are slices of a larger buffer start at a nonzero index.
-  @Test(arguments: backends)
-  func acceptsDataSlices(backend: AESIGE.Backend) throws {
+  /// Inputs that are slices of a larger buffer start at a nonzero, unaligned
+  /// index; none of the arguments may change.
+  @Test(arguments: [0, 1, 7, 15])
+  func acceptsUnalignedSlicesAndLeavesArgumentsIntact(misalignment: Int) throws {
     var rng = SplitMix64(seed: 7)
-    let pool = rng.data(count: 32 + 32 + 160 + 3)
-    let key = pool[1..<33]
-    let iv = pool[33..<65]
-    let input = pool[67..<227]
+    let pool = rng.data(count: misalignment + 32 + 32 + (16 << 10) + 48)
+    let key = pool[misalignment..<misalignment + 32]
+    let iv = pool[misalignment + 32..<misalignment + 64]
+    let input = pool[(misalignment + 64)...]
     let expected = try referenceIGE(Data(input), key: Data(key), iv: Data(iv), encrypting: true)
-    #expect(
-      try AESIGE.transform(input, key: key, iv: iv, encrypting: true, backend: backend)
-        == expected)
-    let cipherPool = Data([0xA5, 0x5A, 0xA5]) + expected + Data([0x5A])
-    let cipherSlice = cipherPool[3..<3 + expected.count]
-    #expect(cipherSlice.startIndex == 3)
-    #expect(
-      try AESIGE.transform(
-        cipherSlice, key: key, iv: iv, encrypting: false, backend: backend) == Data(input))
+    #expect(try AESIGE.encrypt(input, key: key, iv: iv) == expected)
+    let cipherPool = Data(repeating: 0xA5, count: misalignment) + expected + Data([0x5A])
+    let cipherSlice = cipherPool[misalignment..<misalignment + expected.count]
+    #expect(cipherSlice.startIndex == misalignment)
+    #expect(try AESIGE.decrypt(cipherSlice, key: key, iv: iv) == Data(input))
+    var replay = SplitMix64(seed: 7)
+    #expect(pool == replay.data(count: pool.count))
+    #expect(cipherPool.prefix(misalignment).allSatisfy { $0 == 0xA5 } && cipherPool.last == 0x5A)
   }
 
-  @Test(.enabled(if: AESIGE.hardwareAvailable), arguments: [false, true], [0, 1, 7, 15])
-  func cBuffersPreserveBoundariesAndIV(inPlace: Bool, misalignment: Int) throws {
-    var rng = SplitMix64(seed: 42)
-    for length in [0, 16, 32, 160, 65536] {
-      let key = rng.data(count: 32)
-      let iv = rng.data(count: 32)
-      let plain = rng.data(count: length)
-      let cipher = try referenceIGE(plain, key: key, iv: iv, encrypting: true)
-      for encrypting in [true, false] {
-        let source = encrypting ? plain : cipher
-        let expected = encrypting ? cipher : plain
-        let keyBuffer = GuardedBuffer(key, misalignment: misalignment)
-        let ivBuffer = GuardedBuffer(iv, misalignment: misalignment)
-        let input = GuardedBuffer(source, misalignment: misalignment)
-        let output = inPlace ? input : GuardedBuffer(Data(count: length), misalignment: misalignment)
-        #expect(Int(bitPattern: input.bytes) % 16 == misalignment)
-        let transform = encrypting ? cmtproto_aes256_ige_encrypt : cmtproto_aes256_ige_decrypt
-        transform(keyBuffer.bytes, ivBuffer.bytes, input.bytes, output.bytes, length)
-        #expect(output.data == expected)
-        #expect(keyBuffer.data == key)
-        #expect(ivBuffer.data == iv)
-        if !inPlace { #expect(input.data == source) }
-        for buffer in [keyBuffer, ivBuffer, input, output] {
-          #expect(buffer.canariesIntact)
-        }
-      }
-    }
-  }
-
-  @Test(arguments: backends)
-  func rejectsInvalidSizes(backend: AESIGE.Backend) throws {
+  @Test func rejectsInvalidSizes() throws {
     let block = Data(count: 16)
     #expect(throws: MTProtoCryptoError.invalidKeySize(expected: 32, actual: 16)) {
-      try AESIGE.transform(block, key: Data(count: 16), iv: Data(count: 32), encrypting: true, backend: backend)
+      try AESIGE.encrypt(block, key: Data(count: 16), iv: Data(count: 32))
     }
     #expect(throws: MTProtoCryptoError.invalidIVSize(expected: 32, actual: 16)) {
-      try AESIGE.transform(block, key: Data(count: 32), iv: Data(count: 16), encrypting: false, backend: backend)
+      try AESIGE.decrypt(block, key: Data(count: 32), iv: Data(count: 16))
     }
     #expect(throws: MTProtoCryptoError.invalidBlockAlignment(length: 15)) {
-      try AESIGE.transform(Data(count: 15), key: Data(count: 32), iv: Data(count: 32), encrypting: true, backend: backend)
+      try AESIGE.encrypt(Data(count: 15), key: Data(count: 32), iv: Data(count: 32))
     }
-    #expect(
-      try AESIGE.transform(Data(), key: Data(count: 32), iv: Data(count: 32), encrypting: true, backend: backend)
-        .isEmpty)
-  }
-}
-
-/// Explicit alignment and guard bytes, independent of Foundation's allocation
-/// and copy-on-write behavior. The C calls see the actual storage we inspect.
-private final class GuardedBuffer {
-  private let storage: UnsafeMutableRawPointer
-  private let prefixCount: Int
-  private let count: Int
-  let bytes: UnsafeMutablePointer<UInt8>
-
-  init(_ data: Data, misalignment: Int) {
-    count = data.count
-    prefixCount = 16 + misalignment
-    storage = .allocate(byteCount: prefixCount + count + 16, alignment: 16)
-    storage.initializeMemory(as: UInt8.self, repeating: 0xA5, count: prefixCount + count + 16)
-    bytes = storage.advanced(by: prefixCount).assumingMemoryBound(to: UInt8.self)
-    data.copyBytes(to: bytes, count: count)
+    #expect(try AESIGE.encrypt(Data(), key: Data(count: 32), iv: Data(count: 32)).isEmpty)
   }
 
-  deinit { storage.deallocate() }
-
-  var data: Data { Data(bytes: bytes, count: count) }
-
-  var canariesIntact: Bool {
-    let prefix = UnsafeBufferPointer(
-      start: storage.assumingMemoryBound(to: UInt8.self), count: prefixCount)
-    let suffix = UnsafeBufferPointer(start: bytes.advanced(by: count), count: 16)
-    return prefix.allSatisfy { $0 == 0xA5 } && suffix.allSatisfy { $0 == 0xA5 }
+  @Test func eraseClearsTheKeySchedule() {
+    var schedule = AESKeySchedule()
+    let key = Data(repeating: 0x5C, count: 32)
+    schedule.expand(key.bytes, for: .decryption)
+    let expanded = !schedule.isErased()
+    schedule.erase()
+    let erased = schedule.isErased()
+    #expect(expanded && erased)
   }
 }
 
