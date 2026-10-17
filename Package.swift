@@ -84,7 +84,11 @@ let package = Package(
     ),
     .testTarget(
       name: "MTProtoCryptoTests",
-      dependencies: ["MTProtoCrypto"]
+      dependencies: ["MTProtoCrypto", "CMTProtoAESIGE", "CMTProtoAESIGETestSupport"]
+    ),
+    .target(
+      name: "CMTProtoAESIGETestSupport",
+      path: "Tests/CMTProtoAESIGETestSupport"
     ),
     // Vector hashing (`*NotModified` short-circuits) and offset/limit paging
     // math. Crypto is only for the MD5 string-id → long rule the spec mandates.

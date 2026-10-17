@@ -1,3 +1,5 @@
+import CMTProtoAESIGE
+import CMTProtoAESIGETestSupport
 import Crypto
 import CryptoExtras
 import Testing
@@ -15,6 +17,17 @@ import Testing
 struct AESIGETests {
   static let backends = AESIGE.Backend.allCases.filter {
     $0 != .hardware || AESIGE.hardwareAvailable
+  }
+
+  @Test func hardwareDetectionMatchesCPU() {
+    let supported = cmtproto_test_cpu_supports_aes()
+    if supported >= 0 {
+      #expect(
+        AESIGE.hardwareAvailable == (supported == 1),
+        "AES detection disagrees with the host CPU; hardware tests must not silently disappear")
+      #expect((cmtproto_aes_hw_available() != 0) == (supported == 1))
+      #expect(AESIGE.defaultBackend == (supported == 1 ? .hardware : .swiftCrypto))
+    }
   }
 
   /// FIPS-197 Appendix C.3: with a zero IV a single IGE block is the bare cipher.
@@ -63,9 +76,41 @@ struct AESIGETests {
     #expect(
       try AESIGE.transform(input, key: key, iv: iv, encrypting: true, backend: backend)
         == expected)
+    let cipherPool = Data([0xA5, 0x5A, 0xA5]) + expected + Data([0x5A])
+    let cipherSlice = cipherPool[3..<3 + expected.count]
+    #expect(cipherSlice.startIndex == 3)
     #expect(
       try AESIGE.transform(
-        expected[...], key: key, iv: iv, encrypting: false, backend: backend) == Data(input))
+        cipherSlice, key: key, iv: iv, encrypting: false, backend: backend) == Data(input))
+  }
+
+  @Test(.enabled(if: AESIGE.hardwareAvailable), arguments: [false, true], [0, 1, 7, 15])
+  func cBuffersPreserveBoundariesAndIV(inPlace: Bool, misalignment: Int) throws {
+    var rng = SplitMix64(seed: 42)
+    for length in [0, 16, 32, 160, 65536] {
+      let key = rng.data(count: 32)
+      let iv = rng.data(count: 32)
+      let plain = rng.data(count: length)
+      let cipher = try referenceIGE(plain, key: key, iv: iv, encrypting: true)
+      for encrypting in [true, false] {
+        let source = encrypting ? plain : cipher
+        let expected = encrypting ? cipher : plain
+        let keyBuffer = GuardedBuffer(key, misalignment: misalignment)
+        let ivBuffer = GuardedBuffer(iv, misalignment: misalignment)
+        let input = GuardedBuffer(source, misalignment: misalignment)
+        let output = inPlace ? input : GuardedBuffer(Data(count: length), misalignment: misalignment)
+        #expect(Int(bitPattern: input.bytes) % 16 == misalignment)
+        let transform = encrypting ? cmtproto_aes256_ige_encrypt : cmtproto_aes256_ige_decrypt
+        transform(keyBuffer.bytes, ivBuffer.bytes, input.bytes, output.bytes, length)
+        #expect(output.data == expected)
+        #expect(keyBuffer.data == key)
+        #expect(ivBuffer.data == iv)
+        if !inPlace { #expect(input.data == source) }
+        for buffer in [keyBuffer, ivBuffer, input, output] {
+          #expect(buffer.canariesIntact)
+        }
+      }
+    }
   }
 
   @Test(arguments: backends)
@@ -83,6 +128,35 @@ struct AESIGETests {
     #expect(
       try AESIGE.transform(Data(), key: Data(count: 32), iv: Data(count: 32), encrypting: true, backend: backend)
         .isEmpty)
+  }
+}
+
+/// Explicit alignment and guard bytes, independent of Foundation's allocation
+/// and copy-on-write behavior. The C calls see the actual storage we inspect.
+private final class GuardedBuffer {
+  private let storage: UnsafeMutableRawPointer
+  private let prefixCount: Int
+  private let count: Int
+  let bytes: UnsafeMutablePointer<UInt8>
+
+  init(_ data: Data, misalignment: Int) {
+    count = data.count
+    prefixCount = 16 + misalignment
+    storage = .allocate(byteCount: prefixCount + count + 16, alignment: 16)
+    storage.initializeMemory(as: UInt8.self, repeating: 0xA5, count: prefixCount + count + 16)
+    bytes = storage.advanced(by: prefixCount).assumingMemoryBound(to: UInt8.self)
+    data.copyBytes(to: bytes, count: count)
+  }
+
+  deinit { storage.deallocate() }
+
+  var data: Data { Data(bytes: bytes, count: count) }
+
+  var canariesIntact: Bool {
+    let prefix = UnsafeBufferPointer(
+      start: storage.assumingMemoryBound(to: UInt8.self), count: prefixCount)
+    let suffix = UnsafeBufferPointer(start: bytes.advanced(by: count), count: 16)
+    return prefix.allSatisfy { $0 == 0xA5 } && suffix.allSatisfy { $0 == 0xA5 }
   }
 }
 

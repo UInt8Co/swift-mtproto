@@ -218,6 +218,20 @@ enum Storage: Equatable {
       _ = try reader.readUInt32()
     }
   }
+
+  @Test(arguments: 0...7, [0, 3])
+  func truncatedUInt64PreservesCursor(remaining: Int, prefixCount: Int) throws {
+    var reader = TLReader(Data(repeating: 0xA5, count: prefixCount + remaining))
+    try reader.skip(prefixCount)
+    // UInt64 has historically read two UInt32 words: a complete low word is
+    // consumed even if the high word is truncated.
+    let consumed = remaining >= 4 ? 4 : 0
+    #expect(throws: TLError.endOfData(needed: 4, remaining: remaining - consumed)) {
+      _ = try reader.readUInt64()
+    }
+    #expect(reader.offset == prefixCount + consumed)
+    #expect(reader.bytesRemaining == remaining - consumed)
+  }
 }
 
 // MARK: - CRC32 / TL declarations
