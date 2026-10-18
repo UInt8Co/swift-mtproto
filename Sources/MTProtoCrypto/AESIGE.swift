@@ -69,22 +69,23 @@ public enum AESIGE {
     iv: RawSpan
   ) {
     let chunkSize = 16 << 10
-    var chain = iv.loadBlock(at: 0)  // y_{i-1}
+    var chain = iv.load(fromByteOffset: 0, as: Block.self)  // y_{i-1}
     var older = Block()  // p_{i-2}
-    var previous = iv.loadBlock(at: 16)  // p_{i-1}
+    var previous = iv.load(fromByteOffset: 16, as: Block.self)  // p_{i-1}
     for start in stride(from: 0, to: plain.byteCount, by: chunkSize) {
       let end = min(start + chunkSize, plain.byteCount)
       let chunkPrevious = previous
       for offset in stride(from: start, to: end, by: blockSize) {
-        let block = plain.loadBlock(at: offset)
-        output.storeBlock(block ^ older, at: offset)
+        let block = plain.load(fromByteOffset: offset, as: Block.self)
+        output.storeBytes(of: block ^ older, toByteOffset: offset, as: Block.self)
         (older, previous) = (previous, block)
       }
       schedule.cbcEncrypt(&output, range: start..<end, chain: &chain)
       var mask = chunkPrevious
       for offset in stride(from: start, to: end, by: blockSize) {
-        output.storeBlock(output.loadBlock(at: offset) ^ mask, at: offset)
-        mask = plain.loadBlock(at: offset)
+        let block = output.load(fromByteOffset: offset, as: Block.self)
+        output.storeBytes(of: block ^ mask, toByteOffset: offset, as: Block.self)
+        mask = plain.load(fromByteOffset: offset, as: Block.self)
       }
     }
   }
@@ -95,35 +96,14 @@ public enum AESIGE {
     _ cipher: RawSpan, into output: inout MutableRawSpan, schedule: inout AESKeySchedule,
     iv: RawSpan
   ) {
-    var previousCipher = iv.loadBlock(at: 0)
-    var previousPlain = iv.loadBlock(at: 16)
+    var previousCipher = iv.load(fromByteOffset: 0, as: Block.self)
+    var previousPlain = iv.load(fromByteOffset: 16, as: Block.self)
     for offset in stride(from: 0, to: cipher.byteCount, by: blockSize) {
-      let block = cipher.loadBlock(at: offset)
-      var state = block ^ previousPlain
-      schedule.decrypt(&state)
-      state ^= previousCipher
-      output.storeBlock(state, at: offset)
-      (previousCipher, previousPlain) = (block, state)
+      let block = cipher.load(fromByteOffset: offset, as: Block.self)
+      let plain = schedule.decrypt(block ^ previousPlain) ^ previousCipher
+      output.storeBytes(of: plain, toByteOffset: offset, as: Block.self)
+      (previousCipher, previousPlain) = (block, plain)
     }
-  }
-}
-
-extension RawSpan {
-  @inline(__always)
-  fileprivate func loadBlock(at offset: Int) -> AESIGE.Block {
-    unsafeLoadUnaligned(fromByteOffset: offset, as: AESIGE.Block.self)
-  }
-}
-
-extension MutableRawSpan {
-  @inline(__always)
-  fileprivate func loadBlock(at offset: Int) -> AESIGE.Block {
-    unsafeLoadUnaligned(fromByteOffset: offset, as: AESIGE.Block.self)
-  }
-
-  @inline(__always)
-  fileprivate mutating func storeBlock(_ block: AESIGE.Block, at offset: Int) {
-    storeBytes(of: block, toByteOffset: offset, as: AESIGE.Block.self)
   }
 }
 
@@ -135,34 +115,34 @@ extension MutableRawSpan {
 /// storage and in vector registers, which are not scrubbed, and its software
 /// fallback for CPUs without AES or SIMD instructions builds an uncleared copy
 /// on its own stack.
+///
+/// This type is the module's only pointer boundary: each `unsafe` call below
+/// hands BoringSSL `storage` and the blocks for the duration of that one call.
 struct AESKeySchedule: ~Copyable {
   enum Direction { case encryption, decryption }
 
-  // `AES_KEY` is 61 32-bit words. SIMD64 is fixed-size inline storage that
-  // still deploys to macOS 15; InlineArray needs the Swift 6.2 runtime.
+  // `AES_KEY` is 61 32-bit words with 4-byte alignment. SIMD64 is fixed-size
+  // inline storage that still deploys to macOS 15.
   private var storage = SIMD64<UInt32>()
 
   mutating func expand(_ key: RawSpan, for direction: Direction) {
     precondition(key.byteCount == 32)
     let status = key.withUnsafeBytes { key in
-      withUnsafeMutableBytes(of: &storage) { schedule in
-        switch direction {
-        case .encryption: boringSSLAESSetEncryptKey(key.baseAddress!, 256, schedule.baseAddress!)
-        case .decryption: boringSSLAESSetDecryptKey(key.baseAddress!, 256, schedule.baseAddress!)
-        }
+      switch direction {
+      case .encryption: unsafe boringSSLAESSetEncryptKey(key.baseAddress!, 256, &storage)
+      case .decryption: unsafe boringSSLAESSetDecryptKey(key.baseAddress!, 256, &storage)
       }
     }
     precondition(status == 0)
   }
 
-  /// Applies the inverse cipher to `block`. Requires a `.decryption` schedule.
+  /// The inverse cipher of `block`. Requires a `.decryption` schedule.
   @inline(__always)
-  mutating func decrypt(_ block: inout AESIGE.Block) {
-    withUnsafeMutableBytes(of: &block) { block in
-      withUnsafeBytes(of: &storage) { schedule in
-        boringSSLAESDecrypt(block.baseAddress!, block.baseAddress!, schedule.baseAddress!)
-      }
-    }
+  mutating func decrypt(_ block: AESIGE.Block) -> AESIGE.Block {
+    var input = block
+    var output = AESIGE.Block()
+    unsafe boringSSLAESDecrypt(&input, &output, &storage)
+    return output
   }
 
   /// CBC-encrypts `range` of `buffer` in place from the chaining value `chain`,
@@ -173,24 +153,17 @@ struct AESKeySchedule: ~Copyable {
   ) {
     precondition(range.lowerBound >= 0 && range.upperBound <= buffer.byteCount)
     buffer.withUnsafeMutableBytes { buffer in
-      withUnsafeBytes(of: &storage) { schedule in
-        withUnsafeMutableBytes(of: &chain) { chain in
-          let start = buffer.baseAddress! + range.lowerBound
-          boringSSLAESCBCEncrypt(
-            start, start, range.count, schedule.baseAddress!, chain.baseAddress!, 1)
-        }
-      }
+      let start = unsafe buffer.baseAddress! + range.lowerBound
+      unsafe boringSSLAESCBCEncrypt(start, start, range.count, &storage, &chain, 1)
     }
   }
 
   mutating func erase() {
-    withUnsafeMutableBytes(of: &storage) { boringSSLCleanse($0.baseAddress!, $0.count) }
+    unsafe boringSSLCleanse(&storage, MemoryLayout<SIMD64<UInt32>>.size)
   }
 
-  /// For tests; reads the storage in place rather than copying it.
-  mutating func isErased() -> Bool {
-    withUnsafeBytes(of: &storage) { $0.allSatisfy { $0 == 0 } }
-  }
+  /// For tests.
+  func isErased() -> Bool { storage == .zero }
 }
 
 // BoringSSL's raw AES API (`<openssl/aes.h>`, `<openssl/mem.h>`). swift-crypto

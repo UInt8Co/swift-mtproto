@@ -14,7 +14,9 @@ against the published test vectors.
 single-block operations, and swift-crypto's block functions expand the key again
 for every block. So it binds the raw AES functions of the BoringSSL copy that
 swift-crypto already links, expands the key once per message, and implements
-only the chaining itself, in Swift. BoringSSL picks the CPU's AES instructions
+only the chaining itself, in Swift, over bounds-checked spans. The module
+builds with strict memory safety, so every unsafe operation is marked
+`unsafe`; in ``AESIGE`` those are only the calls into BoringSSL. BoringSSL picks the CPU's AES instructions
 when present and constant-time code otherwise. The expanded key lives in one
 noncopyable value that is cleared with `OPENSSL_cleanse` afterwards. Erasure
 goes no further than BoringSSL's own: vector registers are not scrubbed, nor

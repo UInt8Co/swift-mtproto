@@ -35,15 +35,14 @@ public struct TLWriter: Sendable {
 
   // MARK: Fixed-width integers (`int`, `long`)
 
-  /// Appends the first `count` little-endian bytes of `value` in one call;
-  /// per-byte appends dominate encoding time otherwise.
+  /// Appends the little-endian bytes of `value` with one store; per-byte
+  /// appends dominate encoding time otherwise.
   @inline(__always)
-  private mutating func appendLittleEndian<T: FixedWidthInteger>(
-    _ value: T, count: Int = MemoryLayout<T>.size
-  ) {
-    withUnsafeBytes(of: value.littleEndian) { bytes in
-      data.append(bytes.baseAddress!.assumingMemoryBound(to: UInt8.self), count: count)
-    }
+  private mutating func appendLittleEndian<T: FixedWidthInteger & FullyInhabited>(_ value: T) {
+    let offset = data.count
+    data.count += MemoryLayout<T>.size
+    var bytes = data.mutableBytes
+    bytes.storeBytes(of: value.littleEndian, toByteOffset: offset, as: T.self)
   }
 
   public mutating func writeUInt32(_ value: UInt32) {
@@ -101,9 +100,7 @@ public struct TLWriter: Sendable {
     }
     data.append(payload)
     let padding = (4 - (headerSize + count) % 4) % 4
-    if padding > 0 {
-      appendLittleEndian(UInt32(0), count: padding)
-    }
+    data.count += padding  // zero-filled
   }
 
   /// Appends a TL `string` value as the UTF-8 bytes of `string`.

@@ -149,6 +149,22 @@ enum Storage: Equatable {
     #expect(reader.isAtEnd)
   }
 
+  @Test func readerOffsetsAreRelativeToASlice() throws {
+    var writer = TLWriter()
+    writer.writeInt32(-1)
+    writer.writeInt32(7)
+    writer.writeInt64(-2)
+    writer.writeBytes(Data([1, 2, 3]))
+    let data = writer.data
+    var reader = TLReader(data[4...])
+    #expect(try reader.peekUInt32() == 7)
+    #expect(try reader.readInt32() == 7)
+    #expect(try reader.readInt64() == -2)
+    let bytes = try reader.readBytes()
+    #expect(bytes == Data([1, 2, 3]) && bytes.startIndex == 0)
+    #expect(reader.isAtEnd)
+  }
+
   @Test func shortStringPadding() throws {
     // "test": 1 length byte + 4 bytes + 3 zero-padding bytes = 8 bytes.
     var writer = TLWriter()

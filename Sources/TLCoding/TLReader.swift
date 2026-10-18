@@ -24,7 +24,8 @@ public struct TLReader: Sendable {
     }
   }
 
-  private let bytes: [UInt8]
+  // `Data` rather than `[UInt8]`: its spans deploy to every supported OS.
+  private let bytes: Data
   private let limits: Limits
   private var nestingDepth = 0
   private var vectorElements = 0
@@ -32,13 +33,13 @@ public struct TLReader: Sendable {
   public private(set) var offset: Int
 
   public init(_ data: Data, limits: Limits = Limits()) {
-    self.bytes = [UInt8](data)
+    self.bytes = data
     self.limits = limits
     self.offset = 0
   }
 
   public init(_ bytes: [UInt8], limits: Limits = Limits()) {
-    self.bytes = bytes
+    self.bytes = Data(bytes)
     self.limits = limits
     self.offset = 0
   }
@@ -89,17 +90,14 @@ public struct TLReader: Sendable {
   public mutating func readRawBytes(_ count: Int) throws -> Data {
     try require(count)
     defer { offset += count }
-    return bytes.withUnsafeBytes {
-      Data(UnsafeRawBufferPointer(rebasing: $0[offset..<offset + count]))
-    }
+    let start = bytes.startIndex + offset
+    return bytes.subdata(in: start..<start + count)
   }
 
   /// A little-endian integer at `offset`; the caller has checked the length.
   @inline(__always)
-  private func load<T: FixedWidthInteger>(_: T.Type) -> T {
-    bytes.withUnsafeBytes {
-      T(littleEndian: $0.loadUnaligned(fromByteOffset: offset, as: T.self))
-    }
+  private func load<T: FixedWidthInteger & FullyInhabited>(_: T.Type) -> T {
+    T(littleEndian: bytes.bytes.load(fromByteOffset: offset, as: T.self))
   }
 
   /// Skips `count` bytes.
@@ -111,7 +109,7 @@ public struct TLReader: Sendable {
   public mutating func readUInt8() throws -> UInt8 {
     try require(1)
     defer { offset += 1 }
-    return bytes[offset]
+    return bytes.span[offset]
   }
 
   // MARK: Fixed-width integers (`int`, `long`)
