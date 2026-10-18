@@ -1,4 +1,3 @@
-import Crypto
 import CryptoExtras
 
 #if canImport(FoundationEssentials)
@@ -18,10 +17,11 @@ import CryptoExtras
 /// p_i = D_K(c_i ⊕ p_{i-1}) ⊕ c_{i-1}
 /// ```
 ///
-/// swift-crypto does not expose IGE, so this builds on its single-block
-/// `AES.permute` / `AES.inversePermute`.
+/// Only the chaining is implemented here. The block cipher is BoringSSL's, from
+/// the copy swift-crypto builds; see the module overview.
 public enum AESIGE {
   static let blockSize = 16
+  typealias Block = SIMD16<UInt8>
 
   /// Encrypts `plaintext` (whose length must be a multiple of 16) with a
   /// 32-byte `key` and 32-byte `iv`.
@@ -35,9 +35,7 @@ public enum AESIGE {
     try transform(ciphertext, key: key, iv: iv, encrypting: false)
   }
 
-  private static func transform(
-    _ input: Data, key: Data, iv: Data, encrypting: Bool
-  ) throws -> Data {
+  static func transform(_ input: Data, key: Data, iv: Data, encrypting: Bool) throws -> Data {
     guard key.count == 32 else {
       throw MTProtoCryptoError.invalidKeySize(expected: 32, actual: key.count)
     }
@@ -47,44 +45,152 @@ public enum AESIGE {
     guard input.count % blockSize == 0 else {
       throw MTProtoCryptoError.invalidBlockAlignment(length: input.count)
     }
+    guard !input.isEmpty else { return Data() }
 
-    let symmetricKey = SymmetricKey(data: key)
-    let ivBytes = [UInt8](iv)
-    // c_{-1} = iv[0..16], p_{-1} = iv[16..32].
-    var prevCipher = Array(ivBytes[0..<16])
-    var prevPlain = Array(ivBytes[16..<32])
-
-    let bytes = [UInt8](input)
-    var output = [UInt8]()
-    output.reserveCapacity(bytes.count)
-
-    var offset = 0
-    while offset < bytes.count {
-      let block = Array(bytes[offset..<offset + blockSize])
-      if encrypting {
-        var t = xor(block, prevCipher)
-        try AES.permute(&t, key: symmetricKey)
-        let cipher = xor(t, prevPlain)
-        output.append(contentsOf: cipher)
-        prevCipher = cipher
-        prevPlain = block
-      } else {
-        var t = xor(block, prevPlain)
-        try AES.inversePermute(&t, key: symmetricKey)
-        let plain = xor(t, prevCipher)
-        output.append(contentsOf: plain)
-        prevCipher = block
-        prevPlain = plain
-      }
-      offset += blockSize
+    var output = Data(count: input.count)
+    var schedule = AESKeySchedule()
+    defer { schedule.erase() }
+    schedule.expand(key.bytes, for: encrypting ? .encryption : .decryption)
+    var out = output.mutableBytes
+    if encrypting {
+      encrypt(input.bytes, into: &out, schedule: &schedule, iv: iv.bytes)
+    } else {
+      decrypt(input.bytes, into: &out, schedule: &schedule, iv: iv.bytes)
     }
-    return Data(output)
+    return output
   }
 
-  @inline(__always)
-  private static func xor(_ a: [UInt8], _ b: [UInt8]) -> [UInt8] {
-    var result = a
-    for i in 0..<result.count { result[i] ^= b[i] }
-    return result
+  /// IGE encryption is CBC encryption in disguise: with `y_i = c_i ⊕ p_{i-1}`,
+  /// `y_i = E_K(x_i ⊕ y_{i-1})` for `x_i = p_i ⊕ p_{i-2}` (`p_{-2} = 0`,
+  /// `y_{-1} = c_{-1}`). So BoringSSL's CBC loop does the serial part, with a
+  /// linear pass on either side, a cache-sized chunk at a time.
+  private static func encrypt(
+    _ plain: RawSpan, into output: inout MutableRawSpan, schedule: inout AESKeySchedule,
+    iv: RawSpan
+  ) {
+    let chunkSize = 16 << 10
+    var chain = iv.load(fromByteOffset: 0, as: Block.self)  // y_{i-1}
+    var older = Block()  // p_{i-2}
+    var previous = iv.load(fromByteOffset: 16, as: Block.self)  // p_{i-1}
+    for start in stride(from: 0, to: plain.byteCount, by: chunkSize) {
+      let end = min(start + chunkSize, plain.byteCount)
+      let chunkPrevious = previous
+      for offset in stride(from: start, to: end, by: blockSize) {
+        let block = plain.load(fromByteOffset: offset, as: Block.self)
+        output.storeBytes(of: block ^ older, toByteOffset: offset, as: Block.self)
+        (older, previous) = (previous, block)
+      }
+      schedule.cbcEncrypt(&output, range: start..<end, chain: &chain)
+      var mask = chunkPrevious
+      for offset in stride(from: start, to: end, by: blockSize) {
+        let block = output.load(fromByteOffset: offset, as: Block.self)
+        output.storeBytes(of: block ^ mask, toByteOffset: offset, as: Block.self)
+        mask = plain.load(fromByteOffset: offset, as: Block.self)
+      }
+    }
+  }
+
+  /// IGE decryption feeds each plaintext block into the next block's input,
+  /// which no BoringSSL mode does, so this is one block call per block.
+  private static func decrypt(
+    _ cipher: RawSpan, into output: inout MutableRawSpan, schedule: inout AESKeySchedule,
+    iv: RawSpan
+  ) {
+    var previousCipher = iv.load(fromByteOffset: 0, as: Block.self)
+    var previousPlain = iv.load(fromByteOffset: 16, as: Block.self)
+    for offset in stride(from: 0, to: cipher.byteCount, by: blockSize) {
+      let block = cipher.load(fromByteOffset: offset, as: Block.self)
+      let plain = schedule.decrypt(block ^ previousPlain) ^ previousCipher
+      output.storeBytes(of: plain, toByteOffset: offset, as: Block.self)
+      (previousCipher, previousPlain) = (block, plain)
+    }
   }
 }
+
+/// An AES-256 key expanded into BoringSSL's `AES_KEY`, for one direction.
+///
+/// Noncopyable and only ever used in place, so Swift keeps no copies of the
+/// expanded key; ``erase()`` clears it with `OPENSSL_cleanse`. That is the
+/// whole of the erasure: BoringSSL's hardware routines keep round keys in this
+/// storage and in vector registers, which are not scrubbed, and its software
+/// fallback for CPUs without AES or SIMD instructions builds an uncleared copy
+/// on its own stack.
+///
+/// This type is the module's only pointer boundary: each `unsafe` call below
+/// hands BoringSSL `storage` and the blocks for the duration of that one call.
+struct AESKeySchedule: ~Copyable {
+  enum Direction { case encryption, decryption }
+
+  // `AES_KEY` is 61 32-bit words with 4-byte alignment. SIMD64 is fixed-size
+  // inline storage that still deploys to macOS 15.
+  private var storage = SIMD64<UInt32>()
+
+  mutating func expand(_ key: RawSpan, for direction: Direction) {
+    precondition(key.byteCount == 32)
+    let status = key.withUnsafeBytes { key in
+      switch direction {
+      case .encryption: unsafe boringSSLAESSetEncryptKey(key.baseAddress!, 256, &storage)
+      case .decryption: unsafe boringSSLAESSetDecryptKey(key.baseAddress!, 256, &storage)
+      }
+    }
+    precondition(status == 0)
+  }
+
+  /// The inverse cipher of `block`. Requires a `.decryption` schedule.
+  @inline(__always)
+  mutating func decrypt(_ block: AESIGE.Block) -> AESIGE.Block {
+    var input = block
+    var output = AESIGE.Block()
+    unsafe boringSSLAESDecrypt(&input, &output, &storage)
+    return output
+  }
+
+  /// CBC-encrypts `range` of `buffer` in place from the chaining value `chain`,
+  /// which is left holding the last ciphertext block. Requires an `.encryption`
+  /// schedule.
+  mutating func cbcEncrypt(
+    _ buffer: inout MutableRawSpan, range: Range<Int>, chain: inout AESIGE.Block
+  ) {
+    precondition(range.lowerBound >= 0 && range.upperBound <= buffer.byteCount)
+    buffer.withUnsafeMutableBytes { buffer in
+      let start = unsafe buffer.baseAddress! + range.lowerBound
+      unsafe boringSSLAESCBCEncrypt(start, start, range.count, &storage, &chain, 1)
+    }
+  }
+
+  mutating func erase() {
+    unsafe boringSSLCleanse(&storage, MemoryLayout<SIMD64<UInt32>>.size)
+  }
+
+  /// For tests.
+  func isErased() -> Bool { storage == .zero }
+}
+
+// BoringSSL's raw AES API (`<openssl/aes.h>`, `<openssl/mem.h>`). swift-crypto
+// builds BoringSSL into `CryptoExtras` on every platform, with its symbols
+// prefixed, but does not export the module; these bind those symbols. If
+// swift-crypto ever renames them, linking fails rather than anything at run time.
+// BoringSSL dispatches to the CPU's AES instructions when present and to
+// constant-time code otherwise.
+
+@_extern(c, "CCryptoBoringSSL_AES_set_encrypt_key")
+private func boringSSLAESSetEncryptKey(
+  _ key: UnsafeRawPointer, _ bits: CUnsignedInt, _ schedule: UnsafeMutableRawPointer
+) -> CInt
+
+@_extern(c, "CCryptoBoringSSL_AES_set_decrypt_key")
+private func boringSSLAESSetDecryptKey(
+  _ key: UnsafeRawPointer, _ bits: CUnsignedInt, _ schedule: UnsafeMutableRawPointer
+) -> CInt
+
+@_extern(c, "CCryptoBoringSSL_AES_decrypt")
+private func boringSSLAESDecrypt(
+  _ input: UnsafeRawPointer, _ output: UnsafeMutableRawPointer, _ schedule: UnsafeRawPointer)
+
+@_extern(c, "CCryptoBoringSSL_AES_cbc_encrypt")
+private func boringSSLAESCBCEncrypt(
+  _ input: UnsafeRawPointer, _ output: UnsafeMutableRawPointer, _ length: Int,
+  _ schedule: UnsafeRawPointer, _ iv: UnsafeMutableRawPointer, _ encrypt: CInt)
+
+@_extern(c, "CCryptoBoringSSL_OPENSSL_cleanse")
+private func boringSSLCleanse(_ buffer: UnsafeMutableRawPointer, _ length: Int)

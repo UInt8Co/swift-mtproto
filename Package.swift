@@ -34,7 +34,8 @@ let package = Package(
     ),
     .target(
       name: "TLCoding",
-      dependencies: ["TLCodingMacros", "MTProtoUtils"]
+      dependencies: ["TLCodingMacros", "MTProtoUtils"],
+      swiftSettings: [.strictMemorySafety()]
     ),
     .testTarget(
       name: "TLCodingTests",
@@ -74,7 +75,9 @@ let package = Package(
         "MTProtoUtils",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "CryptoExtras", package: "swift-crypto"),
-      ]
+      ],
+      // `AESIGE` binds BoringSSL's block functions with `@_extern(c)`.
+      swiftSettings: [.enableExperimentalFeature("Extern"), .strictMemorySafety()]
     ),
     .testTarget(
       name: "MTProtoCryptoTests",

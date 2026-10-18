@@ -98,7 +98,7 @@ public enum SRP {
     let derived = try! KDF.Insecure.PBKDF2.deriveKey(
       from: ph1, salt: salt1, using: .sha512, outputByteCount: 64,
       unsafeUncheckedRounds: 100_000)
-    let pbkdf2 = derived.withUnsafeBytes { Data($0) }
+    let pbkdf2 = unsafe derived.withUnsafeBytes { unsafe Data($0) }
     return sh(pbkdf2, salt2)
   }
 

@@ -149,6 +149,22 @@ enum Storage: Equatable {
     #expect(reader.isAtEnd)
   }
 
+  @Test func readerOffsetsAreRelativeToASlice() throws {
+    var writer = TLWriter()
+    writer.writeInt32(-1)
+    writer.writeInt32(7)
+    writer.writeInt64(-2)
+    writer.writeBytes(Data([1, 2, 3]))
+    let data = writer.data
+    var reader = TLReader(data[4...])
+    #expect(try reader.peekUInt32() == 7)
+    #expect(try reader.readInt32() == 7)
+    #expect(try reader.readInt64() == -2)
+    let bytes = try reader.readBytes()
+    #expect(bytes == Data([1, 2, 3]) && bytes.startIndex == 0)
+    #expect(reader.isAtEnd)
+  }
+
   @Test func shortStringPadding() throws {
     // "test": 1 length byte + 4 bytes + 3 zero-padding bytes = 8 bytes.
     var writer = TLWriter()
@@ -217,6 +233,20 @@ enum Storage: Equatable {
     #expect(throws: TLError.endOfData(needed: 4, remaining: 2)) {
       _ = try reader.readUInt32()
     }
+  }
+
+  @Test(arguments: 0...7, [0, 3])
+  func truncatedUInt64PreservesCursor(remaining: Int, prefixCount: Int) throws {
+    var reader = TLReader(Data(repeating: 0xA5, count: prefixCount + remaining))
+    try reader.skip(prefixCount)
+    // UInt64 has historically read two UInt32 words: a complete low word is
+    // consumed even if the high word is truncated.
+    let consumed = remaining >= 4 ? 4 : 0
+    #expect(throws: TLError.endOfData(needed: 4, remaining: remaining - consumed)) {
+      _ = try reader.readUInt64()
+    }
+    #expect(reader.offset == prefixCount + consumed)
+    #expect(reader.bytesRemaining == remaining - consumed)
   }
 }
 
