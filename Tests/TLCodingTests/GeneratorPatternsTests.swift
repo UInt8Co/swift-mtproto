@@ -78,27 +78,31 @@ extension TLRoot.Auth {
 }
 
 // An RPC method struct: `@TLObject(id:returning:)` adds the `TLFunction`
-// conformance with the right `ReturnType`.
+// conformance with the right `ReturnType`; the generator emits the TL name.
 @TLObject(id: 0xa677_244f, returning: TLRoot.Auth.SentCodeNestedType.self)
 private struct SendCodeG: Equatable, Sendable {
+  static var tlMethodName: String { "auth.sendCode" }
   var phoneNumber: String
 }
 
 // A generic `invokeWithLayer`-style wrapper: encode-only (`TLEncodable` +
 // `TLFunction` but not `TLDecodable`), with conditional fields handled by
 // the same flags machinery. Attribute arguments cannot reference `Query`,
-// so the conformance and `ReturnType` are declared at the site.
+// so the `TLFunctionWrapper` conformance and `ReturnType` are declared at
+// the site.
 @TLObject(id: 0xda9b_0d0d)
-private struct InvokeWithLayerG<Query: TLFunction>: TLFunction, Sendable {
+private struct InvokeWithLayerG<Query: TLFunction>: TLFunctionWrapper, Sendable {
   typealias ReturnType = Query.ReturnType
+  static var tlMethodName: String { "invokeWithLayer" }
 
   var layer: Int32
   var query: Query
 }
 
 @TLObject(id: 0xc1cd_5ea9)
-private struct InitConnectionG<Query: TLFunction>: TLFunction, Sendable {
+private struct InitConnectionG<Query: TLFunction>: TLFunctionWrapper, Sendable {
   typealias ReturnType = Query.ReturnType
+  static var tlMethodName: String { "initConnection" }
 
   @TLFlags var flags: UInt32 = 0
   var apiId: Int32
@@ -187,6 +191,44 @@ struct GeneratorPatternsTests {
     expected.writeInt32(200)
     SendCodeG(phoneNumber: "+1555").tlEncode(to: &expected)
     #expect(writer.data == expected.data)
+  }
+
+  @Test func functionsReportTheirTLMethodName() {
+    #expect(SendCodeG.tlMethodName == "auth.sendCode")
+    #expect(InvokeWithLayerG<SendCodeG>.tlMethodName == "invokeWithLayer")
+    let wrapped: any TLFunction = InitConnectionG(apiId: 4, query: SendCodeG(phoneNumber: "+1"))
+    #expect(type(of: wrapped).tlMethodName == "initConnection")
+  }
+
+  @Test func plainFunctionIsItsOwnInnermostFunction() throws {
+    let function = SendCodeG(phoneNumber: "+1555")
+    let innermost = try #require(function.tlInnermostFunction as? SendCodeG)
+    #expect(innermost == function)
+  }
+
+  @Test func innermostFunctionIsFoundThroughNestedWrappers() throws {
+    let function = SendCodeG(phoneNumber: "+1555")
+    let nested = InvokeWithLayerG(layer: 200, query: InitConnectionG(apiId: 4, query: function))
+
+    // Statically typed, through an opaque generic, and through an existential:
+    // each resolves to the wrapper's witness rather than `TLFunction`'s default.
+    func innermost(of value: some TLFunction) -> any TLFunction { value.tlInnermostFunction }
+    let existential: any TLFunction = nested
+
+    for found in [nested.tlInnermostFunction, innermost(of: nested), existential.tlInnermostFunction] {
+      #expect(type(of: found).tlMethodName == "auth.sendCode")
+      #expect(try #require(found as? SendCodeG) == function)
+    }
+    #expect(type(of: nested.query.query).tlMethodName == "auth.sendCode")
+  }
+
+  @Test func wrapperExposesItsQueryWithoutKnowingTheGenericTypes() throws {
+    let function = SendCodeG(phoneNumber: "+1555")
+    let existential: any TLFunction = InvokeWithLayerG(
+      layer: 200, query: InitConnectionG(apiId: 4, query: function))
+    let wrapper = try #require(existential as? any TLFunctionWrapper)
+    #expect(type(of: wrapper.query).tlMethodName == "initConnection")
+    #expect(!(function as any TLFunction is any TLFunctionWrapper))
   }
 
   @Test func genericWrapperWithConditionalFields() throws {

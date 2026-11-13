@@ -12,6 +12,9 @@ extension TL {
   /// TL: `rpc_drop_answer#58e4a740 req_msg_id:long = RpcDropAnswer`
   @TLObject(id: 0x58e4a740, returning: TL.RpcDropAnswerType.self)
   public struct RpcDropAnswer: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "rpc_drop_answer"
+    }
     public var reqMsgId: Int64
   }
 }

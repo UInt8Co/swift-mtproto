@@ -90,15 +90,20 @@ extension ResolvedSchema {
     @_spi(GeneratorInternals) public var genericClause = ""
     @_spi(GeneratorInternals) public var conformances = "Equatable, Sendable"
     @_spi(GeneratorInternals) public var leadingMembers: [DeclSyntax] = []
+    /// The TL name a method struct reports as `TLFunction.tlMethodName`,
+    /// e.g. `users.getUsers`; `nil` for a constructor.
+    @_spi(GeneratorInternals) public var methodName: String?
 
     @_spi(GeneratorInternals) public init(
       attributeSuffix: String = "", genericClause: String = "",
-      conformances: String = "Equatable, Sendable", leadingMembers: [DeclSyntax] = []
+      conformances: String = "Equatable, Sendable", leadingMembers: [DeclSyntax] = [],
+      methodName: String? = nil
     ) {
       self.attributeSuffix = attributeSuffix
       self.genericClause = genericClause
       self.conformances = conformances
       self.leadingMembers = leadingMembers
+      self.methodName = methodName
     }
   }
 
@@ -131,6 +136,12 @@ extension ResolvedSchema {
       for member in shape.leadingMembers {
         member
       }
+      if let methodName = shape.methodName {
+        // Computed rather than `static let`: generic wrappers cannot have
+        // static stored properties, and a literal getter needs no lazy init.
+        DeclSyntax(
+          "\(raw: visibility) static var tlMethodName: String { \(literal: methodName) }")
+      }
       for property in properties {
         let attribute = property.attribute.map { "\($0) " } ?? ""
         let defaultSuffix = property.defaultValue.map { " = \($0)" } ?? ""
@@ -144,20 +155,25 @@ extension ResolvedSchema {
 
   /// The shape of a generic `invokeWith…` wrapper: the conformance is declared at
   /// the site, since attribute arguments cannot name the generic parameter.
+  ///
+  /// A wrapper conforms to `TLFunctionWrapper`, whose `query` requirement the
+  /// `query:!X` property satisfies; any other generic shape is rejected rather
+  /// than emitted as a wrapper middleware could not see through.
   func genericFunctionShape(_ method: Method, visibility: String) throws -> ObjectStructShape {
-    let returnType: String
-    if case .genericQuery = method.returnType {
-      returnType = "Query.ReturnType"
-    } else {
-      returnType = try swiftType(for: method.returnType, in: method.tlName)
+    let queryFields = method.fields.filter { $0.kind == .genericQuery }
+    guard case .genericQuery = method.returnType, queryFields.count == 1,
+      Naming.propertyName(queryFields[0].tlName) == "query"
+    else {
+      throw GeneratorError.unsupportedGenericMethod(method: method.tlName)
     }
     // No `Equatable`: a generic wrapper's query is opaque and never compared.
     return ObjectStructShape(
       genericClause: "<Query: TLFunction>",
-      conformances: "TLFunction, Sendable",
+      conformances: "TLFunctionWrapper, Sendable",
       leadingMembers: [
-        DeclSyntax("\(raw: visibility) typealias ReturnType = \(raw: returnType)")
-      ]
+        DeclSyntax("\(raw: visibility) typealias ReturnType = Query.ReturnType")
+      ],
+      methodName: method.tlName
     )
   }
 

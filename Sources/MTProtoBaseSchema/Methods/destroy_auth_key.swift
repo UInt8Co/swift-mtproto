@@ -12,5 +12,8 @@ extension TL {
   /// TL: `destroy_auth_key#d1435160 = DestroyAuthKeyRes`
   @TLObject(id: 0xd1435160, returning: TL.DestroyAuthKeyResType.self)
   public struct DestroyAuthKey: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "destroy_auth_key"
+    }
   }
 }

@@ -12,6 +12,9 @@ extension TL {
   /// TL: `ping#7abe77ec ping_id:long = Pong`
   @TLObject(id: 0x7abe77ec, returning: TL.Pong.self)
   public struct Ping: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "ping"
+    }
     public var pingId: Int64
   }
 }

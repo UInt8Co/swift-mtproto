@@ -12,6 +12,9 @@ extension TL {
   /// TL: `req_pq_multi#be7e8ef1 nonce:int128 = ResPQ`
   @TLObject(id: 0xbe7e8ef1, returning: TL.ResPQ.self)
   public struct ReqPqMulti: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "req_pq_multi"
+    }
     public var nonce: TLInt128
   }
 }

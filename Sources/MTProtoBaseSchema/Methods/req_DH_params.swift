@@ -12,6 +12,9 @@ extension TL {
   /// TL: `req_DH_params#d712e4be nonce:int128 server_nonce:int128 p:bytes q:bytes public_key_fingerprint:long encrypted_data:bytes = Server_DH_Params`
   @TLObject(id: 0xd712e4be, returning: TL.ServerDHParamsType.self)
   public struct ReqDHParams: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "req_DH_params"
+    }
     public var nonce: TLInt128
     public var serverNonce: TLInt128
     public var p: Data

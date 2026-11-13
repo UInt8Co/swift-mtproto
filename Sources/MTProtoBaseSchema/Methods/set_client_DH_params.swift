@@ -12,6 +12,9 @@ extension TL {
   /// TL: `set_client_DH_params#f5045f1f nonce:int128 server_nonce:int128 encrypted_data:bytes = Set_client_DH_params_answer`
   @TLObject(id: 0xf5045f1f, returning: TL.SetClientDHParamsAnswerType.self)
   public struct SetClientDHParams: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "set_client_DH_params"
+    }
     public var nonce: TLInt128
     public var serverNonce: TLInt128
     public var encryptedData: Data

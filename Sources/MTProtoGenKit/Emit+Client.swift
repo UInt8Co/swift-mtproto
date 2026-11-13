@@ -9,11 +9,18 @@ extension ResolvedSchema {
   func clientCoreFile(visibility: String, extraImports: [String] = []) throws -> GeneratedFile {
     let transport = DeclSyntax(
       """
-      /// Transport used by `TLClient`: delivers one serialized TL function
-      /// call to the peer and returns the raw serialized reply body
-      /// (the boxed result of that function).
+      /// Transport used by `TLClient`: invokes one TL function on the peer and
+      /// returns its decoded result.
+      ///
+      /// The seam is typed so a value is encoded and decoded exactly once, by
+      /// the transport at the bottom of a chain, which serializes the function
+      /// and decodes the reply as `Function.ReturnType`. Wrappers in between
+      /// (logging, retries, peer observation) see the typed function — its
+      /// `tlMethodName`, its `tlInnermostFunction` through `invokeWith…`
+      /// wrappers — and the typed result.
       \(raw: visibility) protocol TLClientTransport: Sendable {
-        func send(_ requestBody: Data) async throws -> Data
+        /// Invokes a TL function and returns its decoded result.
+        func invoke<Function: TLFunction>(_ function: Function) async throws -> Function.ReturnType
       }
       """
     )
@@ -35,10 +42,9 @@ extension ResolvedSchema {
       )
       DeclSyntax(
         """
-        /// Invokes a TL function and decodes its boxed result.
+        /// Invokes a TL function through the transport and returns its result.
         \(raw: visibility) func invoke<Function: TLFunction>(_ function: Function) async throws -> Function.ReturnType {
-          let replyBody = try await transport.send(function.tlSerialized())
-          return try Function.ReturnType(tlData: replyBody)
+          try await transport.invoke(function)
         }
         """
       )

@@ -33,13 +33,17 @@ public macro TLObject(id: UInt32) = #externalMacro(module: "TLCodingMacros", typ
 
 /// Like ``TLObject(id:)``, and marks the type a TL *function* whose boxed result
 /// decodes as `Result`: the generated extension also conforms to ``TLFunction``.
+/// The struct names its TL method itself (``TLFunction/tlMethodName``).
 ///
 /// A generic wrapper declares the conformance itself and gets an encoder only —
 /// see <doc:DefiningTLTypes>.
 ///
 /// ```swift
 /// @TLObject(id: 0xa677244f, returning: Auth.SentCodeType.self)
-/// struct SendCode { ... }
+/// struct SendCode {
+///   static var tlMethodName: String { "auth.sendCode" }
+///   ...
+/// }
 /// ```
 @attached(
   extension, conformances: TLConstructed, TLEncodable, TLDecodable, TLFunction,

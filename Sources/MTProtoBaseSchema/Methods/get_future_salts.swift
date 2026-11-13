@@ -12,6 +12,9 @@ extension TL {
   /// TL: `get_future_salts#b921bd04 num:int = FutureSalts`
   @TLObject(id: 0xb921bd04, returning: TL.FutureSalts.self)
   public struct GetFutureSalts: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "get_future_salts"
+    }
     public var num: Int32
   }
 }

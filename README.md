@@ -34,10 +34,13 @@ swift run mtproto-gen-swift --mode client --output Sources/MyTelegramSchema
 
 Everything nests under a root `TL` namespace: constructors become `@TLObject`
 structs, multi-constructor types become `@TLType` enums, and RPC methods become
-`TLFunction` request structs carrying their result type. With `--mode client` you
-also get a `TLClient` exposing every method as an `async` function grouped by
-namespace — `try await client.auth.sendCode(…)` — over a `TLClientTransport` you
-supply.
+`TLFunction` request structs carrying their result type and TL method name. With
+`--mode client` you also get a `TLClient` exposing every method as an `async`
+function grouped by namespace — `try await client.auth.sendCode(…)` — over a
+`TLClientTransport` you supply. The transport is typed: it receives the
+`TLFunction` and returns its decoded result, so only the bottom of a transport
+chain touches bytes, and middleware sees through `invokeWith…` wrappers via
+`TLFunctionWrapper`.
 
 `Scripts/generate-mtproto-schema.sh` regenerates `MTProtoBaseSchema` itself.
 

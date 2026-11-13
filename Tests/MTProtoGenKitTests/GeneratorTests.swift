@@ -158,10 +158,48 @@ struct GeneratorTests {
     #expect(getUsers.contains("returning: [Bool].self"))
 
     let wrapper = try contents(files, "Methods/invokeWithLayer.swift")
-    #expect(wrapper.contains("public struct InvokeWithLayer<Query: TLFunction>: TLFunction, Sendable"))
+    #expect(
+      wrapper.contains("public struct InvokeWithLayer<Query: TLFunction>: TLFunctionWrapper, Sendable"))
     #expect(wrapper.contains("public typealias ReturnType = Query.ReturnType"))
+    #expect(wrapper.contains("public var query: Query"))
     #expect(wrapper.contains("@TLObject(id: 0x00000066)"))
     #expect(!wrapper.contains("returning:"))
+  }
+
+  @Test func methodsReportTheirTLName() throws {
+    func methodName(_ source: String) -> String? {
+      source.firstMatch(of: /static var tlMethodName: String \{\s*"([^"]*)"\s*\}/).map { String($0.1) }
+    }
+    let files = try generate()
+    #expect(methodName(try contents(files, "Methods/auth.sendCode.swift")) == "auth.sendCode")
+    #expect(methodName(try contents(files, "Methods/users.getUsers.swift")) == "users.getUsers")
+    #expect(methodName(try contents(files, "Methods/updates.getState.swift")) == "updates.getState")
+    #expect(methodName(try contents(files, "Methods/invokeWithLayer.swift")) == "invokeWithLayer")
+    // Only methods: constructors are not functions.
+    #expect(methodName(try contents(files, "Types/InputPeer.swift")) == nil)
+
+    let internalFiles = try generate(visibility: .internal)
+    let sendCode = try contents(internalFiles, "Methods/auth.sendCode.swift")
+    #expect(sendCode.contains("internal static var tlMethodName: String"))
+  }
+
+  @Test func genericMethodsMustBeQueryWrappers() {
+    let wrapper = "{\"name\": \"query\", \"type\": \"!X\"}], \"type\": \"X\"}"
+    // The wrapped query under another name, a concrete result, or a second
+    // `!X`: none is a `TLFunctionWrapper`, so generation stops.
+    let variants = [
+      "{\"name\": \"request\", \"type\": \"!X\"}], \"type\": \"X\"}",
+      "{\"name\": \"query\", \"type\": \"!X\"}], \"type\": \"Updates\"}",
+      "{\"name\": \"query\", \"type\": \"!X\"}, {\"name\": \"other\", \"type\": \"!X\"}], \"type\": \"X\"}",
+    ]
+    for variant in variants {
+      let schema = miniSchema.replacing(wrapper, with: variant)
+      #expect(schema != miniSchema)
+      #expect(throws: GeneratorError.unsupportedGenericMethod(method: "invokeWithLayer")) {
+        _ = try MTProtoGenerator(options: GeneratorOptions(mode: .client))
+          .generate(schemaData: Data(schema.utf8))
+      }
+    }
   }
 
   @Test func clientExposesNamespacedAsyncMethods() throws {
@@ -169,10 +207,15 @@ struct GeneratorTests {
     let core = try contents(files, "Client/TLClient.swift")
     #expect(core.contains("public protocol TLClientTransport: Sendable"))
     #expect(core.contains("public final class TLClient: Sendable"))
-    #expect(
-      core.contains(
-        "public func invoke<Function: TLFunction>(_ function: Function) async throws -> Function.ReturnType"
-      ))
+    // The transport seam is typed: the protocol requirement and the client
+    // method share one signature, and the client only forwards.
+    let invokeSignature =
+      "func invoke<Function: TLFunction>(_ function: Function) async throws -> Function.ReturnType"
+    #expect(core.contains("\n  \(invokeSignature)\n"))
+    #expect(core.contains("public \(invokeSignature)"))
+    #expect(core.contains("try await transport.invoke(function)"))
+    #expect(!core.contains("Data"))
+    #expect(!core.contains("send("))
 
     let auth = try contents(files, "Client/TLClient+Auth.swift")
     #expect(auth.contains("public var auth: AuthMethods {"))

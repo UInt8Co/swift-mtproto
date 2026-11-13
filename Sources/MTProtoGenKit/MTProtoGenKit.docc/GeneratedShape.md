@@ -14,12 +14,22 @@ per TL namespace (`TL.Auth`, `TL.Messages`, …). Generated references are alway
 | type with several constructors | `@TLType indirect enum TL.Auth.SentCodeType`, one case per constructor carrying its struct |
 | type with one constructor | the struct itself, referenced directly |
 | `flags:#` / `field:flags.N?Type` / `flags.N?true` | `@TLFlags` / `@TLConditional` properties, plus `@TLFlagsEquatable` for an `==` that ignores the raw bitfields |
-| method `auth.sendCode#… = auth.SentCode` | `@TLObject(id:returning:)` struct `TL.Auth.SendCode` conforming to `TLFunction` (file `Methods/auth.sendCode.swift`) |
-| generic wrappers (`invokeWithLayer`, `query:!X`) | generic structs like `TL.InvokeWithLayer<Query: TLFunction>`, encode-only |
+| method `auth.sendCode#… = auth.SentCode` | `@TLObject(id:returning:)` struct `TL.Auth.SendCode` conforming to `TLFunction`, with `tlMethodName` `"auth.sendCode"` (file `Methods/auth.sendCode.swift`) |
+| generic wrappers (`invokeWithLayer`, `query:!X = X`) | generic structs like `TL.InvokeWithLayer<Query: TLFunction>` conforming to `TLFunctionWrapper`, encode-only |
 | `--mode client` | `TLClient` over a caller-provided `TLClientTransport`, with an async function per method: `try await client.auth.sendCode(…)` |
 
 The generated code depends only on `TLCoding`. Bring your own transport:
-implement `TLClientTransport` and hand `TLClient` a connection.
+implement `TLClientTransport` and hand `TLClient` a connection. The seam is
+typed — `invoke<Function: TLFunction>(_:) async throws -> Function.ReturnType` —
+so only the transport at the bottom of a chain serializes the function and
+decodes the reply. Transports layered above it (logging, retries, observing the
+peers in a result) receive the typed function and result, read
+`Function.tlMethodName`, and see through `invokeWith…` wrappers with
+`tlInnermostFunction`, without re-parsing bytes.
+
+A generic method must be a `query:!X = X` wrapper — exactly one `!X` parameter,
+named `query`, and the result `X` — so it can be a `TLFunctionWrapper`; the
+generator rejects any other generic shape.
 
 ## Naming
 

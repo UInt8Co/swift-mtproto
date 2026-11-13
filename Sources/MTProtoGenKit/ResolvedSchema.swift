@@ -43,7 +43,7 @@ public struct ResolvedSchema: Sendable {
     "TL", "TLCoding", "Swift", "Type",
     "Int32", "Int64", "UInt32", "UInt64", "Double", "String", "Data", "Bool",
     "TLInt128", "TLInt256", "TLWriter", "TLReader", "TLError", "TLFunction",
-    "TLEncodable", "TLDecodable", "TLConstructed", "TLAnyObject",
+    "TLFunctionWrapper", "TLEncodable", "TLDecodable", "TLConstructed", "TLAnyObject",
     "Equatable", "Sendable", "Optional", "Array",
   ]
 

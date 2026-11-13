@@ -241,6 +241,7 @@ public enum GeneratorError: Error, Equatable, CustomStringConvertible {
   case invalidMethodManifest(line: Int, reason: String)
   case emittedInvalidSwift(path: String, details: String)
   case missingUmbrellaModule
+  case unsupportedGenericMethod(method: String)
 
   public var description: String {
     switch self {
@@ -265,6 +266,9 @@ public enum GeneratorError: Error, Equatable, CustomStringConvertible {
       return "generated file '\(path)' is not valid Swift: \(details)"
     case .missingUmbrellaModule:
       return "a split generation run needs an umbrella module name"
+    case .unsupportedGenericMethod(let method):
+      return
+        "generic method '\(method)' is not a 'query:!X = X' wrapper (exactly one '!X' parameter, named 'query', and result 'X')"
     }
   }
 }

@@ -153,9 +153,9 @@ extension ResolvedSchema {
       contents: try SwiftFile.render(declarations, extraImports: extraImports))
   }
 
-  /// `Methods/<tl.methodName>.swift` — the request struct; the TLCoding
-  /// macro also attaches the `TLFunction` conformance carrying the method's
-  /// result type.
+  /// `Methods/<tl.methodName>.swift` — the request struct, reporting its TL
+  /// name; the TLCoding macro also attaches the `TLFunction` conformance
+  /// carrying the method's result type.
   func methodFile(
     _ method: Method, visibility: String, extraImports: [String] = []
   ) throws -> GeneratedFile {
@@ -164,7 +164,8 @@ extension ResolvedSchema {
       shape = try genericFunctionShape(method, visibility: visibility)
     } else {
       let returnType = try swiftType(for: method.returnType, in: method.tlName)
-      shape = ObjectStructShape(attributeSuffix: ", returning: \(returnType).self")
+      shape = ObjectStructShape(
+        attributeSuffix: ", returning: \(returnType).self", methodName: method.tlName)
     }
     let declaration = try objectStructDecl(
       tlDeclaration: method.tlDeclaration,

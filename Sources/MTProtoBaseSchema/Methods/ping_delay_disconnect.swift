@@ -12,6 +12,9 @@ extension TL {
   /// TL: `ping_delay_disconnect#f3427b8c ping_id:long disconnect_delay:int = Pong`
   @TLObject(id: 0xf3427b8c, returning: TL.Pong.self)
   public struct PingDelayDisconnect: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "ping_delay_disconnect"
+    }
     public var pingId: Int64
     public var disconnectDelay: Int32
   }

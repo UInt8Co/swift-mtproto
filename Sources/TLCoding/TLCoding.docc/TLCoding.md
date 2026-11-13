@@ -68,6 +68,7 @@ a hand-written type and a generated one meet the same wire format.
 - ``TLCodable``
 - ``TLConstructed``
 - ``TLFunction``
+- ``TLFunctionWrapper``
 - ``TLAnyObject``
 - ``TLInt128``
 - ``TLInt256``

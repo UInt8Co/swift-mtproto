@@ -73,30 +73,48 @@ own type recursively — common in the Telegram API schema.
 ## RPC functions — ``TLObject(id:returning:)``
 
 A functional combinator (an RPC request) pairs a serializable struct with the
-type its boxed result decodes to, which is what ``TLFunction`` carries:
+type its boxed result decodes to, which is what ``TLFunction`` carries, along
+with the method's TL name for logs and diagnostics. The name is not derivable
+from the constructor number, so the struct states it:
 
 ```swift
 @TLObject(id: 0xa677244f, returning: SentCode.self)
-struct SendCode { var phoneNumber: String }
+struct SendCode {
+  static var tlMethodName: String { "auth.sendCode" }
+  var phoneNumber: String
+}
+```
 
+Only the transport at the bottom of an RPC stack touches bytes: it serializes
+the function and decodes the reply as its `ReturnType`. Layers above pass the
+typed function and result through, so nothing is encoded or decoded twice:
+
+```swift
 func invoke<F: TLFunction>(_ f: F) async throws -> F.ReturnType {
-  try F.ReturnType(tlData: try await transport.send(f.tlSerialized()))
+  try F.ReturnType(tlData: try await connection.send(f.tlSerialized()))
 }
 ```
 
 For a *generic* wrapper (`invokeWithLayer#da9b0d0d layer:int query:!X = X`),
 attribute arguments cannot reference the generic parameter. Declare the
-conformance at the site and the macro generates only the encoder — the opaque
-payload cannot be decoded statically:
+``TLFunctionWrapper`` conformance at the site and the macro generates only the
+encoder — the opaque payload cannot be decoded statically:
 
 ```swift
 @TLObject(id: 0xda9b0d0d)
-struct InvokeWithLayer<Query: TLFunction>: TLFunction, Sendable {
+struct InvokeWithLayer<Query: TLFunction>: TLFunctionWrapper, Sendable {
   typealias ReturnType = Query.ReturnType
+  static var tlMethodName: String { "invokeWithLayer" }
   var layer: Int32
   var query: Query
 }
 ```
+
+A wrapper's `query` is reachable without naming its generic types, and
+``TLFunction/tlInnermostFunction`` follows any nesting to the function actually
+being called — `help.getConfig` in
+`invokeWithLayer(initConnection(help.getConfig))`, whether the outer value is
+held concretely, as `some TLFunction`, or as `any TLFunction`.
 
 ## Limitations
 

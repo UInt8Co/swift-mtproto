@@ -12,6 +12,9 @@ extension TL {
   /// TL: `destroy_session#e7512126 session_id:long = DestroySessionRes`
   @TLObject(id: 0xe7512126, returning: TL.DestroySessionResType.self)
   public struct DestroySession: Equatable, Sendable {
+    public static var tlMethodName: String {
+      "destroy_session"
+    }
     public var sessionId: Int64
   }
 }
