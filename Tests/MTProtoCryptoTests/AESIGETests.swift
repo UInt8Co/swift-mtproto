@@ -41,6 +41,92 @@ struct AESIGETests {
     }
   }
 
+  /// The span forms write the same bytes into storage the caller owns, and
+  /// leave what lies past the result alone.
+  @Test func spanFormsMatchTheDataForms() throws {
+    var rng = SplitMix64(seed: 0x5350_414E)
+    for blocks in [0, 1, 2, 3, 17, 1023, 1024, 1025, 2049] {
+      let key = rng.data(count: 32)
+      let iv = rng.data(count: 32)
+      let input = rng.data(count: blocks * 16)
+      let cipher = try AESIGE.encrypt(input, key: key, iv: iv)
+      var encrypted = Data(repeating: 0xEE, count: input.count + 5)
+      var decrypted = Data(repeating: 0xDD, count: input.count + 5)
+      do {
+        var out = encrypted.mutableBytes
+        try AESIGE.encrypt(input.bytes, into: &out, key: key, iv: iv)
+      }
+      do {
+        var out = decrypted.mutableBytes
+        try AESIGE.decrypt(cipher.bytes, into: &out, key: key, iv: iv)
+      }
+      #expect(encrypted == cipher + Data(repeating: 0xEE, count: 5), "\(blocks)")
+      #expect(decrypted == input + Data(repeating: 0xDD, count: 5), "\(blocks)")
+    }
+    #expect(
+      Self.spanFailure(length: 17, keyLength: 32, ivLength: 32)
+        == .invalidBlockAlignment(length: 17))
+    #expect(
+      Self.spanFailure(length: 16, keyLength: 31, ivLength: 32)
+        == .invalidKeySize(expected: 32, actual: 31))
+    #expect(
+      Self.spanFailure(length: 16, keyLength: 32, ivLength: 33)
+        == .invalidIVSize(expected: 32, actual: 33))
+  }
+
+  /// What both span forms throw for these lengths; `nil` when either accepts
+  /// them or they disagree.
+  private static func spanFailure(length: Int, keyLength: Int, ivLength: Int) -> MTProtoCryptoError? {
+    let input = Data(count: length)
+    let key = Data(count: keyLength)
+    let iv = Data(count: ivLength)
+    var output = Data(count: length + 16)
+    var out = output.mutableBytes
+    var failures: [MTProtoCryptoError] = []
+    do { try AESIGE.encrypt(input.bytes, into: &out, key: key, iv: iv) } catch {
+      if let error = error as? MTProtoCryptoError { failures.append(error) }
+    }
+    do { try AESIGE.decrypt(input.bytes, into: &out, key: key, iv: iv) } catch {
+      if let error = error as? MTProtoCryptoError { failures.append(error) }
+    }
+    return failures.count == 2 && failures[0] == failures[1] ? failures[0] : nil
+  }
+
+  /// A plaintext handed over in pieces encrypts as it does in one piece,
+  /// wherever the pieces are cut — inside a block or across a chunk.
+  @Test func piecewiseEncryptionMatchesOnePiece() throws {
+    var rng = SplitMix64(seed: 0x5049_4543)
+    let key = rng.data(count: 32)
+    let iv = rng.data(count: 32)
+    for length in [16, 48, 4096, (16 << 10) + 32, (48 << 10) + 16] {
+      let input = rng.data(count: length)
+      let expected = try AESIGE.encrypt(input, key: key, iv: iv)
+      let cuts = [0, 1, 15, 16, 17, 31, 32, 33, length / 2, length / 2 + 7, length - 1, length]
+      for first in cuts where first <= length {
+        for second in cuts where second >= first && second <= length {
+          let (output, written) = Self.encryptInPieces(
+            input, cutAt: first, second, key: key, iv: iv)
+          #expect(written == length)
+          #expect(output == expected, "\(length) cut at \(first), \(second)")
+        }
+      }
+    }
+  }
+
+  private static func encryptInPieces(
+    _ input: Data, cutAt first: Int, _ second: Int, key: Data, iv: Data
+  ) -> (output: Data, written: Int) {
+    var output = Data(count: input.count)
+    var out = output.mutableBytes
+    var encryptor = AESIGE.Encryptor(key: key.bytes, iv: iv.bytes)
+    encryptor.update(input[..<first].bytes, into: &out)
+    encryptor.update(input[first..<second].bytes, into: &out)
+    encryptor.update(input[second...].bytes, into: &out)
+    let written = encryptor.written
+    encryptor.finish()
+    return (output, written)
+  }
+
   /// Inputs that are slices of a larger buffer start at a nonzero, unaligned
   /// index; none of the arguments may change.
   @Test(arguments: [0, 1, 7, 15])

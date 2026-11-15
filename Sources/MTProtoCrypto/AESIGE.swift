@@ -35,58 +35,149 @@ public enum AESIGE {
     try transform(ciphertext, key: key, iv: iv, encrypting: false)
   }
 
-  static func transform(_ input: Data, key: Data, iv: Data, encrypting: Bool) throws -> Data {
+  /// Encrypts `plaintext` (whose length must be a multiple of 16) into the
+  /// first `plaintext.byteCount` bytes of `output`, which the caller owns and
+  /// which must not overlap `plaintext`. Nothing is allocated or copied on the
+  /// way: a caller that already has a buffer for the result — a network buffer,
+  /// say — gets the ciphertext written straight into it.
+  public static func encrypt(
+    _ plaintext: RawSpan, into output: inout MutableRawSpan, key: Data, iv: Data
+  ) throws {
+    try validate(key: key, iv: iv, length: plaintext.byteCount)
+    precondition(output.byteCount >= plaintext.byteCount, "output is shorter than the input")
+    var encryptor = Encryptor(key: key.bytes, iv: iv.bytes)
+    encryptor.update(plaintext, into: &output)
+    encryptor.finish()
+  }
+
+  /// Decrypts `ciphertext` (whose length must be a multiple of 16) into the
+  /// first `ciphertext.byteCount` bytes of `output`, which the caller owns and
+  /// which must not overlap `ciphertext`.
+  public static func decrypt(
+    _ ciphertext: RawSpan, into output: inout MutableRawSpan, key: Data, iv: Data
+  ) throws {
+    try validate(key: key, iv: iv, length: ciphertext.byteCount)
+    precondition(output.byteCount >= ciphertext.byteCount, "output is shorter than the input")
+    var schedule = AESKeySchedule()
+    defer { schedule.erase() }
+    schedule.expand(key.bytes, for: .decryption)
+    decrypt(ciphertext, into: &output, schedule: &schedule, iv: iv.bytes)
+  }
+
+  private static func validate(key: Data, iv: Data, length: Int) throws {
     guard key.count == 32 else {
       throw MTProtoCryptoError.invalidKeySize(expected: 32, actual: key.count)
     }
     guard iv.count == 32 else {
       throw MTProtoCryptoError.invalidIVSize(expected: 32, actual: iv.count)
     }
-    guard input.count % blockSize == 0 else {
-      throw MTProtoCryptoError.invalidBlockAlignment(length: input.count)
+    guard length % blockSize == 0 else {
+      throw MTProtoCryptoError.invalidBlockAlignment(length: length)
     }
+  }
+
+  static func transform(_ input: Data, key: Data, iv: Data, encrypting: Bool) throws -> Data {
+    try validate(key: key, iv: iv, length: input.count)
     guard !input.isEmpty else { return Data() }
 
     var output = Data(count: input.count)
-    var schedule = AESKeySchedule()
-    defer { schedule.erase() }
-    schedule.expand(key.bytes, for: encrypting ? .encryption : .decryption)
     var out = output.mutableBytes
     if encrypting {
-      encrypt(input.bytes, into: &out, schedule: &schedule, iv: iv.bytes)
+      try encrypt(input.bytes, into: &out, key: key, iv: iv)
     } else {
-      decrypt(input.bytes, into: &out, schedule: &schedule, iv: iv.bytes)
+      try decrypt(input.bytes, into: &out, key: key, iv: iv)
     }
     return output
   }
 
+  /// IGE encryption of a plaintext handed over in pieces, each written where
+  /// the previous one ended. A piece need not end on a block boundary: its
+  /// last partial block is held back and completed by the next piece.
+  ///
   /// IGE encryption is CBC encryption in disguise: with `y_i = c_i ⊕ p_{i-1}`,
   /// `y_i = E_K(x_i ⊕ y_{i-1})` for `x_i = p_i ⊕ p_{i-2}` (`p_{-2} = 0`,
   /// `y_{-1} = c_{-1}`). So BoringSSL's CBC loop does the serial part, with a
   /// linear pass on either side, a cache-sized chunk at a time.
-  private static func encrypt(
-    _ plain: RawSpan, into output: inout MutableRawSpan, schedule: inout AESKeySchedule,
-    iv: RawSpan
-  ) {
-    let chunkSize = 16 << 10
-    var chain = iv.load(fromByteOffset: 0, as: Block.self)  // y_{i-1}
-    var older = Block()  // p_{i-2}
-    var previous = iv.load(fromByteOffset: 16, as: Block.self)  // p_{i-1}
-    for start in stride(from: 0, to: plain.byteCount, by: chunkSize) {
-      let end = min(start + chunkSize, plain.byteCount)
-      let chunkPrevious = previous
-      for offset in stride(from: start, to: end, by: blockSize) {
-        let block = plain.load(fromByteOffset: offset, as: Block.self)
-        output.storeBytes(of: block ^ older, toByteOffset: offset, as: Block.self)
-        (older, previous) = (previous, block)
+  struct Encryptor: ~Copyable {
+    private var schedule = AESKeySchedule()
+    private var chain: Block  // y_{i-1}
+    private var older = Block()  // p_{i-2}
+    private var previous: Block  // p_{i-1}
+    /// The bytes of a block that the pieces so far left incomplete.
+    private var partial = Block()
+    private var partialCount = 0
+    /// How much of the output is written.
+    private(set) var written = 0
+
+    init(key: RawSpan, iv: RawSpan) {
+      schedule.expand(key, for: .encryption)
+      chain = iv.load(fromByteOffset: 0, as: Block.self)
+      previous = iv.load(fromByteOffset: 16, as: Block.self)
+    }
+
+    mutating func update(_ plain: RawSpan, into output: inout MutableRawSpan) {
+      var consumed = 0
+      // Complete the block an earlier piece left open.
+      while partialCount > 0, partialCount < blockSize, consumed < plain.byteCount {
+        partial[partialCount] = plain.load(fromByteOffset: consumed, as: UInt8.self)
+        partialCount += 1
+        consumed += 1
       }
-      schedule.cbcEncrypt(&output, range: start..<end, chain: &chain)
-      var mask = chunkPrevious
-      for offset in stride(from: start, to: end, by: blockSize) {
-        let block = output.load(fromByteOffset: offset, as: Block.self)
-        output.storeBytes(of: block ^ mask, toByteOffset: offset, as: Block.self)
-        mask = plain.load(fromByteOffset: offset, as: Block.self)
+      if partialCount == blockSize {
+        encryptBlock(partial, into: &output)
+        partialCount = 0
+        partial = Block()
       }
+      let whole = (plain.byteCount - consumed) / blockSize * blockSize
+      encryptWholeBlocks(plain, consumed..<consumed + whole, into: &output)
+      consumed += whole
+      while consumed < plain.byteCount {
+        partial[partialCount] = plain.load(fromByteOffset: consumed, as: UInt8.self)
+        partialCount += 1
+        consumed += 1
+      }
+    }
+
+    /// One block on its own, for the block two pieces share.
+    private mutating func encryptBlock(_ block: Block, into output: inout MutableRawSpan) {
+      output.storeBytes(of: block ^ older, toByteOffset: written, as: Block.self)
+      schedule.cbcEncrypt(&output, range: written..<written + blockSize, chain: &chain)
+      let encrypted = output.load(fromByteOffset: written, as: Block.self)
+      output.storeBytes(of: encrypted ^ previous, toByteOffset: written, as: Block.self)
+      (older, previous) = (previous, block)
+      written += blockSize
+    }
+
+    private mutating func encryptWholeBlocks(
+      _ plain: RawSpan, _ range: Range<Int>, into output: inout MutableRawSpan
+    ) {
+      let chunkSize = 16 << 10
+      // Where in `output` the plaintext byte at `offset` goes.
+      let shift = written - range.lowerBound
+      for start in stride(from: range.lowerBound, to: range.upperBound, by: chunkSize) {
+        let end = min(start + chunkSize, range.upperBound)
+        let chunkPrevious = previous
+        for offset in stride(from: start, to: end, by: blockSize) {
+          let block = plain.load(fromByteOffset: offset, as: Block.self)
+          output.storeBytes(of: block ^ older, toByteOffset: offset + shift, as: Block.self)
+          (older, previous) = (previous, block)
+        }
+        schedule.cbcEncrypt(&output, range: start + shift..<end + shift, chain: &chain)
+        var mask = chunkPrevious
+        for offset in stride(from: start, to: end, by: blockSize) {
+          let block = output.load(fromByteOffset: offset + shift, as: Block.self)
+          output.storeBytes(of: block ^ mask, toByteOffset: offset + shift, as: Block.self)
+          mask = plain.load(fromByteOffset: offset, as: Block.self)
+        }
+      }
+      written += range.count
+    }
+
+    /// Ends the encryption and clears the expanded key. The pieces must have
+    /// added up to whole blocks.
+    mutating func finish() {
+      precondition(partialCount == 0, "the pieces did not add up to whole blocks")
+      schedule.erase()
     }
   }
 

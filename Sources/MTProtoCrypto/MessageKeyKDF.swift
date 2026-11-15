@@ -49,6 +49,59 @@ public enum MTProtoMessageCrypto {
     return digest.subdata(in: 8..<24)  // middle 128 bits
   }
 
+  /// Encrypts one message into storage the caller owns: computes `msg_key`
+  /// over `head ‖ body ‖ tail`, derives the key and IV from it and writes the
+  /// AES-256-IGE ciphertext to the first `head + body + tail` bytes of
+  /// `output`, which must not overlap them. Returns the 16-byte `msg_key`.
+  ///
+  /// The plaintext comes in three pieces so that none has to be copied next to
+  /// the others first: the envelope header a session writes, the message body
+  /// as it was serialized, and the random padding. Only their total length has
+  /// to be a multiple of 16.
+  public static func encrypt(
+    head: RawSpan, body: RawSpan, tail: RawSpan, into output: inout MutableRawSpan,
+    authKey: Data, direction: Direction
+  ) throws -> Data {
+    let length = head.byteCount + body.byteCount + tail.byteCount
+    guard length % AESIGE.blockSize == 0 else {
+      throw MTProtoCryptoError.invalidBlockAlignment(length: length)
+    }
+    precondition(output.byteCount >= length, "output is shorter than the plaintext")
+    var hasher = SHA256()
+    hasher.update(data: authKey.subdata(in: (88 + direction.x)..<(88 + direction.x + 32)))
+    head.withUnsafeBytes { unsafe hasher.update(bufferPointer: $0) }
+    body.withUnsafeBytes { unsafe hasher.update(bufferPointer: $0) }
+    tail.withUnsafeBytes { unsafe hasher.update(bufferPointer: $0) }
+    let msgKey = Data(hasher.finalize()).subdata(in: 8..<24)
+    let (key, iv) = aesKeyIV(authKey: authKey, msgKey: msgKey, direction: direction)
+    var encryptor = AESIGE.Encryptor(key: key.bytes, iv: iv.bytes)
+    encryptor.update(head, into: &output)
+    encryptor.update(body, into: &output)
+    encryptor.update(tail, into: &output)
+    encryptor.finish()
+    return msgKey
+  }
+
+  /// Decrypts one message into storage the caller owns and authenticates it:
+  /// writes the plaintext to the first `ciphertext.byteCount` bytes of
+  /// `output`, which must not overlap `ciphertext`, and returns whether its
+  /// `msg_key` is `msgKey`. The comparison is constant-time. When this returns
+  /// `false` the message is not authentic and what was written must not be used.
+  public static func decrypt(
+    _ ciphertext: RawSpan, msgKey: Data, into output: inout MutableRawSpan,
+    authKey: Data, direction: Direction
+  ) throws -> Bool {
+    let (key, iv) = aesKeyIV(authKey: authKey, msgKey: msgKey, direction: direction)
+    try AESIGE.decrypt(ciphertext, into: &output, key: key, iv: iv)
+    var hasher = SHA256()
+    hasher.update(data: authKey.subdata(in: (88 + direction.x)..<(88 + direction.x + 32)))
+    let length = ciphertext.byteCount
+    output.withUnsafeBytes {
+      unsafe hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: $0[0..<length]))
+    }
+    return MTProtoConstantTime.equals(Data(hasher.finalize()).subdata(in: 8..<24), msgKey)
+  }
+
   /// The AES-256-IGE key/IV derived from `msg_key` and `auth_key`.
   public static func aesKeyIV(
     authKey: Data, msgKey: Data, direction: Direction

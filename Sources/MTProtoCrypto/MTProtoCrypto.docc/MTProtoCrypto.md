@@ -16,13 +16,24 @@ for every block. So it binds the raw AES functions of the BoringSSL copy that
 swift-crypto already links, expands the key once per message, and implements
 only the chaining itself, in Swift, over bounds-checked spans. The module
 builds with strict memory safety, so every unsafe operation is marked
-`unsafe`; in ``AESIGE`` those are only the calls into BoringSSL. BoringSSL picks the CPU's AES instructions
+`unsafe`; in ``AESIGE`` those are only the calls into BoringSSL, and in
+``MTProtoMessageCrypto`` the hashing of a caller's span. BoringSSL picks the CPU's AES instructions
 when present and constant-time code otherwise. The expanded key lives in one
 noncopyable value that is cleared with `OPENSSL_cleanse` afterwards. Erasure
 goes no further than BoringSSL's own: vector registers are not scrubbed, nor
 are the caller's key and input buffers.
 
 It knows nothing about sessions, transports or schemas: values in, values out.
+
+A message can be megabytes — a file part — and a value returned is a buffer
+allocated and, on its way into the caller's own buffer, copied. So the message
+layer also comes in a form that writes into storage the caller owns:
+``MTProtoMessageCrypto/encrypt(head:body:tail:into:authKey:direction:)`` takes the
+plaintext as the pieces a session has it in and writes the ciphertext where it
+is sent from, ``MTProtoMessageCrypto/decrypt(_:msgKey:into:authKey:direction:)``
+writes the plaintext where it is parsed, and ``AESIGE`` has the same pair for
+the cipher alone. Those are spans rather than `Data`, which is what a network
+buffer can lend without a copy.
 
 ## The handshake
 

@@ -265,6 +265,74 @@ struct MTProtoCryptoTests {
     #expect(back == plaintext)
   }
 
+  /// The message-level forms agree with the KDF and IGE they are made of,
+  /// wherever the body ends inside a block, and refuse a message whose key
+  /// does not match.
+  @Test func messageEncryptionIntoCallerStorage() throws {
+    let authKey = Data((0..<256).map { UInt8(truncatingIfNeeded: $0 &* 5 &+ 3) })
+    for direction in [MTProtoMessageCrypto.Direction.fromClient, .fromServer] {
+      for bodyLength in [0, 1, 15, 16, 40, 1000, 70_000] {
+        let head = Data((0..<32).map { UInt8($0) })
+        let body = Data((0..<bodyLength).map { UInt8(truncatingIfNeeded: $0 &* 7) })
+        var padding = 16 - (32 + bodyLength) % 16
+        if padding < 12 { padding += 16 }
+        let tail = Data((0..<padding).map { UInt8(truncatingIfNeeded: 200 &+ $0) })
+        let plaintext = head + body + tail
+        let expectedKey = MTProtoMessageCrypto.messageKey(
+          authKey: authKey, plaintext: plaintext, direction: direction)
+        let (key, iv) = MTProtoMessageCrypto.aesKeyIV(
+          authKey: authKey, msgKey: expectedKey, direction: direction)
+        let expected = try AESIGE.encrypt(plaintext, key: key, iv: iv)
+
+        let (msgKey, cipher) = try Self.seal(
+          head: head, body: body, tail: tail, authKey: authKey, direction: direction)
+        #expect(msgKey == expectedKey, "\(bodyLength)")
+        #expect(cipher == expected, "\(bodyLength)")
+
+        let opened = try Self.open(cipher, msgKey: msgKey, authKey: authKey, direction: direction)
+        #expect(opened.authentic, "\(bodyLength)")
+        #expect(opened.plaintext == plaintext, "\(bodyLength)")
+
+        var tampered = cipher
+        tampered[tampered.count - 1] ^= 1
+        #expect(
+          try !Self.open(tampered, msgKey: msgKey, authKey: authKey, direction: direction)
+            .authentic, "\(bodyLength)")
+        // The other direction's key material must not open it either.
+        let other: MTProtoMessageCrypto.Direction =
+          direction == .fromClient ? .fromServer : .fromClient
+        #expect(
+          try !Self.open(cipher, msgKey: msgKey, authKey: authKey, direction: other).authentic)
+      }
+    }
+    #expect(throws: MTProtoCryptoError.invalidBlockAlignment(length: 33)) {
+      try Self.seal(
+        head: Data(count: 32), body: Data(count: 1), tail: Data(), authKey: authKey,
+        direction: .fromServer)
+    }
+  }
+
+  private static func seal(
+    head: Data, body: Data, tail: Data, authKey: Data, direction: MTProtoMessageCrypto.Direction
+  ) throws -> (msgKey: Data, cipher: Data) {
+    var cipher = Data(count: head.count + body.count + tail.count)
+    var out = cipher.mutableBytes
+    let msgKey = try MTProtoMessageCrypto.encrypt(
+      head: head.bytes, body: body.bytes, tail: tail.bytes, into: &out,
+      authKey: authKey, direction: direction)
+    return (msgKey, cipher)
+  }
+
+  private static func open(
+    _ cipher: Data, msgKey: Data, authKey: Data, direction: MTProtoMessageCrypto.Direction
+  ) throws -> (authentic: Bool, plaintext: Data) {
+    var plaintext = Data(count: cipher.count)
+    var out = plaintext.mutableBytes
+    let authentic = try MTProtoMessageCrypto.decrypt(
+      cipher.bytes, msgKey: msgKey, into: &out, authKey: authKey, direction: direction)
+    return (authentic, plaintext)
+  }
+
   /// Left-pads an odd-length hex string to an even length.
   private func pad(_ hex: String) -> String {
     hex.count % 2 == 0 ? hex : "0" + hex
