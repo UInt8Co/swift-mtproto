@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `Set_client_DH_params_answer` (3 constructors).
   @TLType
-  public indirect enum SetClientDHParamsAnswerType: Equatable, Sendable {
+  public enum SetClientDHParamsAnswerType: Equatable, Sendable {
     /// `dh_gen_ok#3bcbf734 nonce:int128 server_nonce:int128 new_nonce_hash1:int128 = Set_client_DH_params_answer`
     case dhGenOk(TL.DhGenOk)
     /// `dh_gen_retry#46dc1fb9 nonce:int128 server_nonce:int128 new_nonce_hash2:int128 = Set_client_DH_params_answer`

@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `Server_DH_Params` (2 constructors).
   @TLType
-  public indirect enum ServerDHParamsType: Equatable, Sendable {
+  public enum ServerDHParamsType: Equatable, Sendable {
     /// `server_DH_params_ok#d0e8075c nonce:int128 server_nonce:int128 encrypted_answer:bytes = Server_DH_Params`
     case serverDHParamsOk(TL.ServerDHParamsOk)
     /// `server_DH_params_fail#79cb045d nonce:int128 server_nonce:int128 new_nonce_hash:int128 = Server_DH_Params`

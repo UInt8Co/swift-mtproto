@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `BadMsgNotification` (2 constructors).
   @TLType
-  public indirect enum BadMsgNotificationType: Equatable, Sendable {
+  public enum BadMsgNotificationType: Equatable, Sendable {
     /// `bad_msg_notification#a7eff811 bad_msg_id:long bad_msg_seqno:int error_code:int = BadMsgNotification`
     case badMsgNotification(TL.BadMsgNotification)
     /// `bad_server_salt#edab447b bad_msg_id:long bad_msg_seqno:int error_code:int new_server_salt:long = BadMsgNotification`

@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `DestroySessionRes` (2 constructors).
   @TLType
-  public indirect enum DestroySessionResType: Equatable, Sendable {
+  public enum DestroySessionResType: Equatable, Sendable {
     /// `destroy_session_ok#e22045fc session_id:long = DestroySessionRes`
     case destroySessionOk(TL.DestroySessionOk)
     /// `destroy_session_none#62d350c9 session_id:long = DestroySessionRes`

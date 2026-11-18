@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `P_Q_inner_data` (4 constructors).
   @TLType
-  public indirect enum PQInnerDataType: Equatable, Sendable {
+  public enum PQInnerDataType: Equatable, Sendable {
     /// `p_q_inner_data_dc#a9f55f95 pq:bytes p:bytes q:bytes nonce:int128 server_nonce:int128 new_nonce:int256 dc:int = P_Q_inner_data`
     case pQInnerDataDc(TL.PQInnerDataDc)
     /// `p_q_inner_data_temp_dc#56fddf88 pq:bytes p:bytes q:bytes nonce:int128 server_nonce:int128 new_nonce:int256 dc:int expires_in:int = P_Q_inner_data`

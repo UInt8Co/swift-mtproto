@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `DestroyAuthKeyRes` (3 constructors).
   @TLType
-  public indirect enum DestroyAuthKeyResType: Equatable, Sendable {
+  public enum DestroyAuthKeyResType: Equatable, Sendable {
     /// `destroy_auth_key_ok#f660e1d4 = DestroyAuthKeyRes`
     case destroyAuthKeyOk(TL.DestroyAuthKeyOk)
     /// `destroy_auth_key_none#0a9f2259 = DestroyAuthKeyRes`

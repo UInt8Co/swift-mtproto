@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `RpcDropAnswer` (3 constructors).
   @TLType
-  public indirect enum RpcDropAnswerType: Equatable, Sendable {
+  public enum RpcDropAnswerType: Equatable, Sendable {
     /// `rpc_answer_unknown#5e2ad36e = RpcDropAnswer`
     case rpcAnswerUnknown(TL.RpcAnswerUnknown)
     /// `rpc_answer_dropped_running#cd78e586 = RpcDropAnswer`

@@ -11,7 +11,7 @@ extension TL {
 
   /// The TL type `MsgDetailedInfo` (2 constructors).
   @TLType
-  public indirect enum MsgDetailedInfoType: Equatable, Sendable {
+  public enum MsgDetailedInfoType: Equatable, Sendable {
     /// `msg_detailed_info#276d3ec6 msg_id:long answer_msg_id:long bytes:int status:int = MsgDetailedInfo`
     case msgDetailedInfo(TL.MsgDetailedInfo)
     /// `msg_new_detailed_info#809db6df answer_msg_id:long bytes:int status:int = MsgDetailedInfo`
