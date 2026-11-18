@@ -97,12 +97,15 @@ public struct MTProtoGenerator: Sendable {
         group: .support,
         file: try resolved.namespacesFile(
           visibility: visibility, rootNamespaceModule: options.rootNamespaceModule)))
+    // Recursion is a property of the whole type graph, so it is analysed once.
+    let indirectCases = resolved.indirectCaseConstructors()
     for type in resolved.types {
       emitted.append(
         EmittedFile(
           group: .types,
           file: try resolved.typeFile(
-            type, visibility: visibility, extraImports: imports(.types))))
+            type, visibility: visibility, indirectCases: indirectCases,
+            extraImports: imports(.types))))
     }
     for method in resolved.methods {
       let group = ModuleGroup.methods(namespace: method.namespace ?? "")

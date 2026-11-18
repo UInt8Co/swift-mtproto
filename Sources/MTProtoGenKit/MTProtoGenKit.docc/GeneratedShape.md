@@ -11,7 +11,7 @@ per TL namespace (`TL.Auth`, `TL.Messages`, …). Generated references are alway
 | TL construct | Swift |
 |---|---|
 | constructor `auth.sentCode#5e002502 … = auth.SentCode` | `@TLObject(id:)` struct `TL.Auth.SentCode` (file `Types/auth.SentCode.swift`) |
-| type with several constructors | `@TLType indirect enum TL.Auth.SentCodeType`, one case per constructor carrying its struct |
+| type with several constructors | `@TLType enum TL.Auth.SentCodeType`, one case per constructor carrying its struct; only a case whose struct leads back to the enum by value is `indirect` (see <doc:GeneratedShape#Recursive-types>) |
 | type with one constructor | the struct itself, referenced directly |
 | `flags:#` / `field:flags.N?Type` / `flags.N?true` | `@TLFlags` / `@TLConditional` properties, plus `@TLFlagsEquatable` for an `==` that ignores the raw bitfields |
 | method `auth.sendCode#… = auth.SentCode` | `@TLObject(id:returning:)` struct `TL.Auth.SendCode` conforming to `TLFunction`, with `tlMethodName` `"auth.sendCode"` (file `Methods/auth.sendCode.swift`) |
@@ -50,3 +50,14 @@ File names mirror the TL names and stay flat. SwiftPM derives object file names
 from source basenames, and build products may land on a case-insensitive
 filesystem, so every basename is made unique ignoring case: later claimants (in
 emission order, which is deterministic) get `_` appended.
+
+## Recursive types
+
+A type enum's cases hold their constructor structs inline, so a case is
+`indirect` only when its struct leads back to the same enum by value — through a
+field, a `flags.N?` optional, or other structs and enums stored inline. A `Vector`
+field stores its elements on the heap and ends the chain, so `Vector<Block>` inside
+a `Block` constructor needs no `indirect`. The generator finds these cases from the
+strongly connected components of the inline-reference graph; every other case keeps
+its payload unboxed. Where `indirect` sits does not change how a value is built or
+matched.

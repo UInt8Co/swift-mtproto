@@ -35,16 +35,19 @@ private struct InputPeerUserG: Equatable {
 
 // The wrapper enum the generator emits for a multi-constructor type:
 // boxed encoding delegates to the payload struct; decoding switches on the
-// constructor number and reads the payload bare.
+// constructor number and reads the payload bare. A non-recursive type's
+// cases keep their payloads inline.
 @TLType
-private indirect enum InputPeerG: Equatable {
+private enum InputPeerG: Equatable {
   case inputPeerEmpty(InputPeerEmptyG)
   case inputPeerUser(InputPeerUserG)
 }
 
 // A struct holding the enum (boxed field), with conditionals — the common
-// shape of generated constructors. Also exercises recursion through the
-// indirect enum (`replyTo` below references the enclosing type's enum).
+// shape of generated constructors. Also exercises recursion through an
+// `indirect` case (`replyTo` below references the enclosing type's enum): the
+// generator marks only the cases whose payload leads back to their enum
+// inline, so `messageEmpty` stays unboxed.
 @TLObject(id: 0x0102_0304)
 @TLFlagsEquatable
 private struct MessageG: Equatable {
@@ -55,8 +58,14 @@ private struct MessageG: Equatable {
 }
 
 @TLType
-private indirect enum MessageEnumG: Equatable {
-  case message(MessageG)
+private enum MessageEnumG: Equatable {
+  indirect case message(MessageG)
+  case messageEmpty(MessageEmptyG)
+}
+
+@TLObject(id: 0x0102_0305)
+private struct MessageEmptyG: Equatable {
+  var id: Int32
 }
 
 // Namespaces are emitted as nested caseless enums under a root `TL` enum;
@@ -72,7 +81,7 @@ extension TLRoot.Auth {
   }
 
   @TLType
-  indirect enum SentCodeNestedType: Equatable {
+  enum SentCodeNestedType: Equatable {
     case sentCode(TLRoot.Auth.SentCodeNested)
   }
 }
@@ -145,7 +154,7 @@ struct GeneratorPatternsTests {
     #expect(InputPeerG.tlConstructorIDs == [0x7f3b_18ea, 0xdde8_a54c])
   }
 
-  @Test func recursionThroughIndirectEnumRoundTrips() throws {
+  @Test func recursionThroughIndirectCaseRoundTrips() throws {
     let inner = MessageG(peer: .inputPeerEmpty(InputPeerEmptyG()))
     let outer = MessageG(
       pinned: true,
@@ -156,6 +165,10 @@ struct GeneratorPatternsTests {
     #expect(decoded.tlSerialized() == outer.tlSerialized())
     #expect(decoded.pinned == true)
     #expect(decoded.replyTo == .message(inner))
+
+    // The inline case alongside it decodes the same way.
+    let empty = MessageG(peer: .inputPeerEmpty(InputPeerEmptyG()), replyTo: .messageEmpty(MessageEmptyG(id: 7)))
+    #expect(try MessageG(tlData: empty.tlSerialized()) == empty)
   }
 
   @Test func unknownConstructorThrows() {

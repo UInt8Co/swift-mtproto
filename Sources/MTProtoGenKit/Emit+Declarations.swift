@@ -180,20 +180,25 @@ extension ResolvedSchema {
   // MARK: - Type enums
 
   /// The `@TLType` wrapper enum for a multi-constructor TL type: one case
-  /// per constructor, each carrying the constructor's struct.
-  func typeEnumDecl(_ type: TypeDefinition, visibility: String) throws -> DeclSyntax {
+  /// per constructor, each carrying the constructor's struct. Only the cases in
+  /// `indirectCases` (constructor TL names, see ``indirectCaseConstructors()``)
+  /// box their payload.
+  func typeEnumDecl(
+    _ type: TypeDefinition, visibility: String, indirectCases: Set<String>
+  ) throws -> DeclSyntax {
     let enumDecl = try EnumDeclSyntax(
       """
       /// The TL type `\(raw: type.tlName)` (\(raw: String(type.constructors.count)) constructors).
       @TLType
-      \(raw: visibility) indirect enum \(raw: type.swiftEnumName!.local): Equatable, Sendable
+      \(raw: visibility) enum \(raw: type.swiftEnumName!.local): Equatable, Sendable
       """
     ) {
       for constructor in type.constructors {
+        let modifier = indirectCases.contains(constructor.tlName) ? "indirect " : ""
         DeclSyntax(
           """
           /// `\(raw: constructor.tlDeclaration)`
-          case \(raw: constructor.caseName)(\(raw: constructor.swiftName.qualified))
+          \(raw: modifier)case \(raw: constructor.caseName)(\(raw: constructor.swiftName.qualified))
           """
         )
       }

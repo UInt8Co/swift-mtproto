@@ -127,13 +127,19 @@ extension ResolvedSchema {
 
   /// `Types/<tl.TypeName>.swift` — the `@TLType` enum for a multi-constructor
   /// type, followed by one `@TLObject` struct per constructor, in the namespace
-  /// scope.
+  /// scope. `indirectCases` is ``indirectCaseConstructors()`` of the schema
+  /// the type belongs to.
   func typeFile(
-    _ type: TypeDefinition, visibility: String, extraImports: [String] = []
+    _ type: TypeDefinition, visibility: String, indirectCases: Set<String>,
+    extraImports: [String] = []
   ) throws -> GeneratedFile {
     var declarations: [(scope: String, decl: DeclSyntax)] = []
     if let enumName = type.swiftEnumName {
-      declarations.append((enumName.scope, try typeEnumDecl(type, visibility: visibility)))
+      declarations.append(
+        (
+          enumName.scope,
+          try typeEnumDecl(type, visibility: visibility, indirectCases: indirectCases)
+        ))
     }
     for constructor in type.constructors {
       declarations.append(

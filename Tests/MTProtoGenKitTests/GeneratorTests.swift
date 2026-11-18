@@ -104,7 +104,8 @@ struct GeneratorTests {
     let files = try generate()
     let inputPeer = try contents(files, "Types/InputPeer.swift")
     #expect(inputPeer.contains("@TLType"))
-    #expect(inputPeer.contains("public indirect enum InputPeerType: Equatable, Sendable"))
+    #expect(inputPeer.contains("public enum InputPeerType: Equatable, Sendable"))
+    #expect(!inputPeer.contains("indirect"))
     #expect(inputPeer.contains("case inputPeerEmpty(TL.InputPeerEmpty)"))
     #expect(inputPeer.contains("case inputPeerUser(TL.InputPeerUser)"))
     #expect(inputPeer.contains("@TLObject(id: 0x7f3b18ea)"))
@@ -238,7 +239,7 @@ struct GeneratorTests {
     let files = try generate(mode: .client, visibility: .internal)
     let inputPeer = try contents(files, "Types/InputPeer.swift")
     #expect(inputPeer.contains("internal struct InputPeerEmpty: Equatable, Sendable"))
-    #expect(inputPeer.contains("internal indirect enum InputPeerType"))
+    #expect(inputPeer.contains("internal enum InputPeerType"))
     let core = try contents(files, "Client/TLClient.swift")
     #expect(core.contains("internal final class TLClient: Sendable"))
   }
